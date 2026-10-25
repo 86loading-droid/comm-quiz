@@ -96,7 +96,7 @@
   function gradeOf(id) {
     var n = node(id); if (!n) return null;
     if (n.imp && n.imp.grade) return n.imp.grade;
-    var p = pathOf(id); for (var i = p.length - 2; i >= 0; i--) if (p[i].imp && p[i].imp.grade) return p[i].imp.grade;
+    var p = pathOf(id); for (var i = p.length - 2; i >= 1; i--) if (p[i].imp && p[i].imp.grade) return p[i].imp.grade;
     return null;
   }
   function impText(n) {

@@ -1,7 +1,7 @@
 /* 공통: 서버 호출, 화면 도구, 범위 표시 */
 (function () {
   var CFG = window.QUIZ_CONFIG || {};
-  var APP_VERSION = '1.0.0';
+  var APP_VERSION = '1.1.0';
   window.APP_VERSION = APP_VERSION;
 
   function api(action, payload) {
@@ -93,6 +93,18 @@
     for (var j = i - 1; j >= 0 && lv > 0; j--) { if (OUT[j].ch !== n.ch) break; if (OUT[j].level < lv) { out.unshift(OUT[j]); lv = OUT[j].level; } }
     return out;
   }
+  function gradeOf(id) {
+    var n = node(id); if (!n) return null;
+    if (n.imp && n.imp.grade) return n.imp.grade;
+    var p = pathOf(id); for (var i = p.length - 2; i >= 0; i--) if (p[i].imp && p[i].imp.grade) return p[i].imp.grade;
+    return null;
+  }
+  function impText(n) {
+    if (!n || !n.imp) return '';
+    var c = n.imp.subtotal || n.imp.count;
+    return (n.imp.grade ? '중요도 ' + n.imp.grade : '') + (c ? ' · 기출 ' + c + '회' : '') + (n.imp.latest ? ' · 최근 ' + n.imp.latest : '');
+  }
+  function gradeChip(g) { if (!g) return null; if (g === '미산정') return h('span', { class: 'chip', text: '기출 횟수 미산정' }); return h('span', { class: 'chip ' + (g === '상' ? 'bad' : g === '중' ? 'warn' : ''), text: '임용 중요도 ' + g }); }
   function nodeText(n) { return (n.num ? n.num + ' ' : '') + n.title; }
   function rangeIds(start, end) {
     var si = start && IDX[start] !== undefined ? IDX[start] : 0;
@@ -124,7 +136,7 @@
   window.Q = {
     api: api, beacon: beacon, $: $, $$: $$, esc: esc, h: h, toast: toast, modal: modal, confirmBox: confirmBox,
     sizeButtons: sizeButtons, fmtDate: fmtDate, fmtTime: fmtTime, TYPE_LABEL: TYPE_LABEL, KIND_LABEL: KIND_LABEL,
-    OUT: OUT, node: node, chapterOf: chapterOf, pathOf: pathOf, nodeText: nodeText, rangeIds: rangeIds, rangeLabel: rangeLabel, rangePages: rangePages,
+    OUT: OUT, node: node, gradeOf: gradeOf, impText: impText, gradeChip: gradeChip, chapterOf: chapterOf, pathOf: pathOf, nodeText: nodeText, rangeIds: rangeIds, rangeLabel: rangeLabel, rangePages: rangePages,
     sget: sget, sset: sset, isDemo: function () { return !!window.DEMO_BACKEND; }
   };
 })();

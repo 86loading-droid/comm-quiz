@@ -33,7 +33,7 @@
       go,
       h('div', { class: 'note small', style: 'margin-top:18px', html:
         '<b>저장되는 정보</b><br>학번, 이름, 응시 시각, 답안, 점수, 화면 이탈 기록(시각과 종류), 접속 기기 종류(휴대폰·태블릿·노트북과 화면 크기)가 저장됩니다. ' +
-        '열람은 담당 교수만 하며, 수업의 형성평가에만 씁니다. 기록은 학기 수업이 끝나면 담당 교수가 지웁니다.' })
+        '열람은 담당 교수만 하며, 수업의 형성평가에만 씁니다. 기록의 보관과 삭제는 담당 교수가 관리합니다.' })
     ]);
     form.addEventListener('submit', function (e) {
       e.preventDefault();
@@ -405,7 +405,7 @@
       res.items.forEach(function (it) {
         var mk = it.frac >= 1 ? ['ok', '맞음'] : it.frac > 0 ? ['part', '부분 ' + Math.round(it.frac * 100) + '%'] : ['bad', '틀림'];
         var blk = h('div', { class: 'review-item' }, [
-          h('div', { class: 'row' }, [h('b', { text: it.no + '번' }), h('span', { class: 'chip', text: Q.TYPE_LABEL[it.type] }), it.code ? h('span', { class: 'chip warn', text: '기출 ' + it.code }) : null, h('span', { class: 'mark ' + mk[0], text: mk[1] + (it.provisional ? ' (예비)' : '') })]),
+          h('div', { class: 'row' }, [h('b', { text: it.no + '번' }), h('span', { class: 'chip', text: Q.TYPE_LABEL[it.type] }), it.code ? h('span', { class: 'chip warn', text: '기출 ' + it.code }) : null, it.grade === '상' ? h('span', { class: 'chip bad', text: '임용 빈출' }) : null, h('span', { class: 'mark ' + mk[0], text: mk[1] + (it.provisional ? ' (예비)' : '') })]),
           h('p', { style: 'white-space:pre-wrap', text: it.stem })
         ]);
         if (it.type === 'mc') {

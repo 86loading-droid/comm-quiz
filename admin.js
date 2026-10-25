@@ -65,7 +65,8 @@
     Q.OUT.forEach(function (n) {
       if (n.ch !== chId || n.level === 0) return;
       var pad = n.level === 1 ? '' : n.level === 2 ? '   ' : '      ';
-      opts.push(h('option', { value: n.id, text: pad + Q.nodeText(n) }));
+      var g = n.imp && n.imp.grade ? '  [' + n.imp.grade + ((n.imp.subtotal || n.imp.count) ? ' · 기출 ' + (n.imp.subtotal || n.imp.count) : '') + ']' : '';
+      opts.push(h('option', { value: n.id, text: pad + Q.nodeText(n) + g }));
     });
     return opts;
   }
@@ -80,14 +81,35 @@
     var sCh = h('select', { 'aria-label': '시작 장' }), sNode = h('select', { 'aria-label': '시작 위치' });
     var eCh = h('select', { 'aria-label': '끝 장' }), eNode = h('select', { 'aria-label': '끝 위치' });
     chapters().forEach(function (c) {
-      sCh.appendChild(h('option', { value: c.id, text: c.num + ' ' + c.title }));
-      eCh.appendChild(h('option', { value: c.id, text: c.num + ' ' + c.title }));
+      var g = c.imp && c.imp.grade ? '  [' + c.imp.grade + ']' : '';
+      sCh.appendChild(h('option', { value: c.id, text: c.num + ' ' + c.title + g }));
+      eCh.appendChild(h('option', { value: c.id, text: c.num + ' ' + c.title + g }));
     });
     function fillS() { sNode.innerHTML = ''; nodeOptions(sCh.value, '장 첫 페이지부터').forEach(function (o) { sNode.appendChild(o); }); }
     function fillE() { eNode.innerHTML = ''; nodeOptions(eCh.value, '장 끝까지').forEach(function (o) { eNode.appendChild(o); }); }
     sCh.value = st.sCh; fillS(); sNode.value = st.sNode; eCh.value = st.eCh; fillE(); eNode.value = st.eNode;
     var label = h('div', { class: 'range-label', 'aria-live': 'polite' });
     var avail = h('p', { class: 'small muted' });
+    var trendBox = h('div', { class: 'trend-box' });
+    function drawTrend(id) {
+      trendBox.innerHTML = '';
+      var rows = id.map(Q.node).filter(function (n) { return n.level > 0 && n.imp && n.imp.grade && (n.imp.count > 0 || n.imp.grade === '미산정'); });
+      var W = { '상': 3, '중': 2, '하': 1 };
+      rows.sort(function (a, b) { return ((W[b.imp.grade] || 0) - (W[a.imp.grade] || 0)) || ((b.imp.subtotal || b.imp.count || 0) - (a.imp.subtotal || a.imp.count || 0)); });
+      trendBox.appendChild(h('p', { class: 'small', style: 'margin:14px 0 6px', html: '<b>임용 출제 경향</b> (범위 안 단원, 기출 횟수 기준 중요도)' }));
+      if (!rows.length) { trendBox.appendChild(h('p', { class: 'small muted', text: '이 범위에는 임용 기출로 확인된 단원이 없습니다.' })); return; }
+      var tb = h('tbody');
+      rows.forEach(function (n) {
+        var ch = Q.node(n.ch);
+        tb.appendChild(h('tr', {}, [
+          h('td', {}, [Q.gradeChip(n.imp.grade)]),
+          h('td', { html: '<b>' + Q.esc(Q.nodeText(n)) + '</b><div class="tiny muted">' + Q.esc(ch.num) + (n.imp.trend ? ' · ' + Q.esc(n.imp.trend) : '') + '</div>' }),
+          h('td', { class: 'small', text: n.imp.grade === '미산정' ? '-' : (n.imp.subtotal || n.imp.count || 0) + '회' + (n.imp.recent ? ' (최근 5년 ' + n.imp.recent + ')' : '') }),
+          h('td', { class: 'tiny muted', text: (n.imp.codes || []).slice(-4).join(', ') })
+        ]));
+      });
+      trendBox.appendChild(h('div', { class: 'table-wrap' }, [h('table', {}, [h('thead', {}, [h('tr', {}, ['중요도', '단원·경향', '횟수', '최근 기출'].map(function (t) { return h('th', { text: t }); }))]), tb])]));
+    }
     var counts = JSON.parse(JSON.stringify(st.counts));
     var mixBox = h('div', { class: 'mix' });
     var totalOut = h('b');
@@ -97,6 +119,7 @@
     function refresh() {
       label.textContent = Q.rangeLabel(startId() === sCh.value ? sCh.value : startId(), endId());
       var id = ids(), c = countIn(id), pg = Q.rangePages(id);
+      drawTrend(id);
       avail.innerHTML = '범위 안 문항: 객관식 <b>' + c.mc + '</b> · 단답형 <b>' + c.short + '</b> · 서술형 <b>' + c.essay + '</b> · 임용 기출 변형 <b>' + c.imyong + '</b>' +
         (pg.length ? '<br>강의자료 쪽: ' + Q.esc(pg[0]) + ' ~ ' + Q.esc(pg[pg.length - 1]) + ' (' + pg.length + '쪽)' : '');
       var tot = counts.mc + counts.short + counts.essay + counts.imyong;
@@ -117,15 +140,16 @@
     [sCh, sNode, eCh, eNode].forEach(function (s) { s.addEventListener('change', function () { if (s === sCh) fillS(); if (s === eCh) fillE(); refresh(); }); });
     var exUsed = h('input', { type: 'checkbox', checked: st.excludeUsed });
     var shuffle = h('input', { type: 'checkbox', checked: st.shuffle });
+    var prefer = h('input', { type: 'checkbox', checked: st.preferImportant !== false });
     var tl = h('input', { type: 'number', min: '0', max: '180', value: String(st.timeLimit), style: 'max-width:120px' });
     var showRes = h('select', {}, [h('option', { value: 'immediate', text: '제출하면 바로 점수·해설 공개' }), h('option', { value: 'after', text: '교수가 공개한 뒤에 공개' })]);
     showRes.value = st.showResult;
     var genBtn = h('button', { class: 'btn accent', type: 'button' });
-    function form() { return { sCh: sCh.value, sNode: sNode.value, eCh: eCh.value, eNode: eNode.value, counts: counts, excludeUsed: exUsed.checked, timeLimit: Number(tl.value) || 0, showResult: showRes.value, shuffle: shuffle.checked }; }
+    function form() { return { sCh: sCh.value, sNode: sNode.value, eCh: eCh.value, eNode: eNode.value, counts: counts, excludeUsed: exUsed.checked, timeLimit: Number(tl.value) || 0, showResult: showRes.value, shuffle: shuffle.checked, preferImportant: prefer.checked }; }
     function range() { return { start: sNode.value === chapters()[0].id ? null : sNode.value, end: eNode.value }; }
     genBtn.addEventListener('click', function () {
       genBtn.disabled = true; genBtn.textContent = '만드는 중…';
-      call('generate', { range: range(), counts: counts, excludeUsed: exUsed.checked }).then(function (r) {
+      call('generate', { range: range(), counts: counts, excludeUsed: exUsed.checked, preferImportant: prefer.checked }).then(function (r) {
         refresh();
         if (!r.ok) { Q.toast(r.message, 4000); return; }
         draft = { form: form(), range: range(), rangeLabel: label.textContent, questions: r.questions, shortage: r.shortage };
@@ -140,7 +164,7 @@
         h('div', { class: 'range-side' }, [h('b', { text: '시작' }), h('label', { class: 'field' }, [h('span', { text: '대제목(장)' }), sCh]), h('label', { class: 'field' }, [h('span', { text: '소제목·내용' }), sNode])]),
         h('div', { class: 'range-side' }, [h('b', { text: '끝' }), h('label', { class: 'field' }, [h('span', { text: '대제목(장)' }), eCh]), h('label', { class: 'field' }, [h('span', { text: '소제목·내용' }), eNode])])
       ]),
-      h('p', { class: 'small', style: 'margin:14px 0 6px', html: '<b>시험 범위 표시</b> (학생 화면에 이대로 나갑니다)' }), label, avail
+      h('p', { class: 'small', style: 'margin:14px 0 6px', html: '<b>시험 범위 표시</b> (학생 화면에 이대로 나갑니다)' }), label, avail, trendBox
     ]));
     body.appendChild(h('div', { class: 'card' }, [
       h('p', { class: 'kicker', text: '2단계' }), h('h2', { text: '문항 수와 유형' }),
@@ -149,6 +173,7 @@
       h('div', { class: 'grid2', style: 'margin-top:8px' }, [
         h('label', { class: 'row' }, [exUsed, h('span', { text: '이전 회기에 낸 문항은 빼기' })]),
         h('label', { class: 'row' }, [shuffle, h('span', { text: '학생마다 문항·보기 순서 섞기' })]),
+        h('label', { class: 'row' }, [prefer, h('span', { text: '임용 중요도 높은 단원 먼저 뽑기' })]),
         h('label', { class: 'field' }, [h('span', { text: '제한 시간(분, 0은 제한 없음)' }), tl]),
         h('label', { class: 'field' }, [h('span', { text: '결과 공개' }), showRes])
       ]),
@@ -204,6 +229,7 @@
         h('b', { text: (i + 1) + '번' }), h('span', { class: 'chip', text: Q.TYPE_LABEL[q.type] }),
         q.kind === 'imyong' ? h('span', { class: 'chip warn', text: '임용 기출 변형 ' + (q.code || '') }) : null,
         q.source ? h('span', { class: 'chip', text: '근거 ' + q.source }) : null,
+        Q.gradeChip(q.grade || (q.unit ? Q.gradeOf(q.unit) : null)),
         h('span', { style: 'flex:1' }),
         h('button', { class: 'btn ghost sm', type: 'button', text: '다른 문항으로', onclick: replace }),
         h('button', { class: 'btn ghost sm', type: 'button', text: '고치기', onclick: edit }),
@@ -222,7 +248,7 @@
     }
     function replace() {
       var t = q.kind === 'imyong' ? 'imyong' : q.type;
-      call('regenOne', { range: draft.range, type: t, excludeIds: draft.questions.map(function (x) { return x.bankId; }), excludeUsed: draft.form.excludeUsed }).then(function (r) {
+      call('regenOne', { range: draft.range, type: t, excludeIds: draft.questions.map(function (x) { return x.bankId; }), excludeUsed: draft.form.excludeUsed, preferImportant: draft.form.preferImportant !== false }).then(function (r) {
         if (!r.ok) { Q.toast(r.message); return; }
         draft.questions[i] = r.question; renderDraft($('#preview'));
       }).catch(function () { });
@@ -478,6 +504,9 @@
       } })])
     ]));
     var bank = h('div', { class: 'card' }, [h('h2', { text: '문항은행' }), h('p', { class: 'muted' }, [h('span', { class: 'spinner' }), ' 불러오는 중…'])]);
+    var outs = window.TREND_OUTSIDE || [];
+    if (outs.length) body.appendChild(h('div', { class: 'card' }, [h('h2', { text: '강의자료 범위 밖 임용 빈출 영역' }), h('p', { class: 'small muted', text: '지금 강의자료(1~6장)에는 없어 출제하지 않는 영역입니다. 다음 차시 자료가 올라오면 문항은행에 넣을 수 있습니다.' }),
+      h('ul', { class: 'small' }, outs.slice().sort(function (a, b) { return (b.count || 0) - (a.count || 0); }).slice(0, 15).map(function (o) { return h('li', { text: o.topic + ' — 기출 ' + (o.count || '?') + '회' + (o.latest ? ' (최근 ' + o.latest + ')' : '') }); }))]));
     body.appendChild(bank);
     call('bankList').then(function (r) {
       if (!r.ok) return;
@@ -490,10 +519,11 @@
         tb.appendChild(h('tr', {}, [
           h('td', { style: 'padding-left:' + (10 + n.level * 14) + 'px', html: n.level === 0 ? '<b>' + Q.esc(n.num + ' ' + n.title) + '</b>' : Q.esc(Q.nodeText(n)) }),
           h('td', { class: 'tiny muted', text: (n.pages || []).slice(0, 1).concat((n.pages || []).length > 1 ? ['…' + n.pages[n.pages.length - 1]] : []).join(' ') }),
+          h('td', { class: 'tiny', text: Q.impText(n) }),
           h('td', { text: b ? String(b.mc) : '' }), h('td', { text: b ? String(b.short) : '' }), h('td', { text: b ? String(b.essay) : '' }), h('td', { text: b ? String(b.imyong) : '' })
         ]));
       });
-      bank.appendChild(h('div', { class: 'table-wrap' }, [h('table', {}, [h('thead', {}, [h('tr', {}, ['목차', '쪽', '객관식', '단답형', '서술형', '기출 변형'].map(function (t) { return h('th', { text: t }); }))]), tb])]));
+      bank.appendChild(h('div', { class: 'table-wrap' }, [h('table', {}, [h('thead', {}, [h('tr', {}, ['목차', '쪽', '임용 출제 경향', '객관식', '단답형', '서술형', '기출 변형'].map(function (t) { return h('th', { text: t }); }))]), tb])]));
     }).catch(function () { });
   }
 

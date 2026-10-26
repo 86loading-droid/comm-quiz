@@ -93,13 +93,16 @@
         box.appendChild(h('div', { class: 'chart-box' }, [cv]));
         drawHistory(cv, rel);
       }
-      var tb = h('table', {}, [h('thead', {}, [h('tr', {}, [h('th', { text: '시험' }), h('th', { text: '응시' }), h('th', { text: '내 점수' }), h('th', { text: '반 평균' })])])]);
+      var tb = h('table', {}, [h('thead', {}, [h('tr', {}, [h('th', { text: '시험' }), h('th', { text: '응시' }), h('th', { text: '내 점수' }), h('th', { text: '반 평균' }), h('th', { text: '' })])])]);
       var body = h('tbody');
       r.history.slice().reverse().forEach(function (x) {
         body.appendChild(h('tr', {}, [
           h('td', { text: x.title }), h('td', { text: Q.fmtDate(x.at) }),
           h('td', { html: x.released ? '<b>' + x.score + '</b>' + (x.status === 'terminated' ? ' <span class="chip bad">이탈 종료</span>' : '') : '<span class="muted">공개 전</span>' }),
-          h('td', { text: x.released && x.classAvg != null ? x.classAvg + ' (' + x.classN + '명)' : '-' })
+          h('td', { text: x.released && x.classAvg != null ? x.classAvg + ' (' + x.classN + '명)' : '-' }),
+          h('td', {}, [x.released ? h('button', { class: 'btn ghost sm', text: '다시 보기', onclick: function () {
+            Q.api('myResult', { sid: x.sid, studentNo: me.no, name: me.name }).then(function (r) { if (r.ok) showResult(r); else Q.toast(r.message); });
+          } }) : null])
         ]));
       });
       tb.appendChild(body);
@@ -216,6 +219,7 @@
       h('span', { class: 'chip acc', id: 'qh', text: (ex.cur + 1) + ' / ' + ex.questions.length }),
       h('span', { class: 'chip', text: Q.TYPE_LABEL[q.type] }),
       q.kind === 'imyong' ? h('span', { class: 'chip warn', text: '임용 기출 변형' + (q.code ? ' · ' + q.code : '') }) : null,
+      q.kind === 'orig' ? h('span', { class: 'chip bad', text: '임용 기출' + (q.code ? ' · ' + q.code : '') }) : null,
       h('span', { style: 'flex:1' }),
       h('button', { class: 'btn ghost sm', type: 'button', text: '문제 듣기', onclick: function () {
         var t = q.stem + (q.options ? '. ' + q.options.map(function (o, i) { return (i + 1) + '번, ' + o; }).join('. ') : ''); speak(t);
@@ -394,7 +398,7 @@
       card.appendChild(h('div', { class: 'note bad', role: 'alert', html: '<b>' + Q.esc(res.message || '화면 이탈 2회로 시험이 종료되었습니다.') + '</b><br>이의가 있으면 담당 교수님께 바로 말씀드리세요.' }));
       card.appendChild(h('p', {}, [h('span', { class: 'big-num', text: '0' }), ' 점']));
     } else if (!res.released) {
-      card.appendChild(h('div', { class: 'note ok', text: '답안이 제출되었습니다. 점수와 해설은 교수님이 공개한 뒤 「내 점수」에서 볼 수 있습니다.' }));
+      card.appendChild(h('div', { class: 'note ok', text: '답안이 제출되었습니다. 교수님이 채점을 확인하고 공개하면 「내 점수」에서 점수를 보고 「다시 보기」로 문항과 해설을 확인할 수 있습니다.' }));
     } else {
       card.appendChild(h('p', {}, [h('span', { class: 'big-num', text: String(res.score) }), ' / 100점']));
       if (res.pending) card.appendChild(h('p', { class: 'note warn small', text: '서술형 ' + res.pending + '문항은 자동 예비 채점 점수입니다. 교수님 채점 뒤 바뀔 수 있습니다.' }));
@@ -405,7 +409,7 @@
       res.items.forEach(function (it) {
         var mk = it.frac >= 1 ? ['ok', '맞음'] : it.frac > 0 ? ['part', '부분 ' + Math.round(it.frac * 100) + '%'] : ['bad', '틀림'];
         var blk = h('div', { class: 'review-item' }, [
-          h('div', { class: 'row' }, [h('b', { text: it.no + '번' }), h('span', { class: 'chip', text: Q.TYPE_LABEL[it.type] }), it.code ? h('span', { class: 'chip warn', text: '기출 ' + it.code }) : null, it.grade === '상' ? h('span', { class: 'chip bad', text: '임용 빈출' }) : null, h('span', { class: 'mark ' + mk[0], text: mk[1] + (it.provisional ? ' (예비)' : '') })]),
+          h('div', { class: 'row' }, [h('b', { text: it.no + '번' }), h('span', { class: 'chip', text: Q.TYPE_LABEL[it.type] }), it.code ? h('span', { class: 'chip warn', text: (it.kind === 'orig' ? '임용 기출 ' : '기출 변형 ') + it.code }) : null, it.grade === '상' ? h('span', { class: 'chip bad', text: '임용 빈출' }) : null, h('span', { class: 'mark ' + mk[0], text: mk[1] + (it.provisional ? ' (예비)' : '') })]),
           h('p', { style: 'white-space:pre-wrap', text: it.stem })
         ]);
         if (it.type === 'mc') {
@@ -415,7 +419,7 @@
         } else {
           blk.appendChild(h('p', { class: 'small', style: 'white-space:pre-wrap', html: '내 답: ' + (Q.esc(it.mine) || '<span class="muted">없음</span>') }));
           if (it.points && it.points.length) blk.appendChild(h('p', { class: 'small', html: '채점 요소: ' + it.points.map(Q.esc).join(' / ') }));
-          if (it.model) blk.appendChild(h('p', { class: 'small', html: '모범 답안: ' + Q.esc(it.model) }));
+          if (it.model) blk.appendChild(h('p', { class: 'small', style: 'white-space:pre-wrap', html: (it.kind === 'orig' ? '공식 정답: ' : '모범 답안: ') + Q.esc(it.model) }));
         }
         if (it.explain) blk.appendChild(h('p', { class: 'small muted', text: '해설: ' + it.explain + (it.source ? ' (강의자료 ' + it.source + ')' : '') }));
         rv.appendChild(blk);

@@ -1,7 +1,7 @@
 /* 공통: 서버 호출, 화면 도구, 범위 표시 */
 (function () {
   var CFG = window.QUIZ_CONFIG || {};
-  var APP_VERSION = '1.1.0';
+  var APP_VERSION = '1.2.0';
   window.APP_VERSION = APP_VERSION;
 
   function api(action, payload) {
@@ -79,7 +79,7 @@
     return (d.getMonth() + 1) + '.' + d.getDate() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
   }
   function fmtTime(t) { var d = new Date(t), p = function (n) { return (n < 10 ? '0' : '') + n; }; return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()); }
-  var TYPE_LABEL = { mc: '객관식', short: '단답형', essay: '서술형', imyong: '임용 기출 변형' };
+  var TYPE_LABEL = { mc: '객관식', short: '단답형', essay: '서술형', imyong: '임용 기출 변형', orig: '임용 기출 원문' };
   var KIND_LABEL = { hidden: '다른 화면으로 전환', blur: '다른 창 선택', reenter: '앱 종료 후 다시 입장', leave: '페이지 나감' };
 
   /* 목차(정답 없음) */

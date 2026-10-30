@@ -1,18 +1,27 @@
 /* 공통: 서버 호출, 화면 도구, 범위 표시 */
 (function () {
   var CFG = window.QUIZ_CONFIG || {};
-  var APP_VERSION = '1.2.1';
+  var APP_VERSION = '1.3.1';
   window.APP_VERSION = APP_VERSION;
 
-  function api(action, payload) {
+  // 응답이 오지 않는 요청을 끝없이 기다리지 않는다(접속이 몰릴 때 한두 건이 멈추는 경우가 있음) → 시간이 지나면 timeout으로 돌려주고 호출한 쪽이 다시 보낸다
+  var API_TIMEOUT = { save: 20000, enter: 30000, submit: 40000, violation: 25000, settle: 30000 };
+  function api(action, payload, ms) {
     var body = Object.assign({ action: action }, payload || {});
     if (window.DEMO_BACKEND) {
       return new Promise(function (res) { setTimeout(function () { res(window.DEMO_BACKEND.handle(JSON.parse(JSON.stringify(body)))); }, 120); });
     }
     if (!CFG.api) return Promise.resolve({ ok: false, code: 'no_api', message: '서버 주소가 설정되지 않았습니다.' });
-    return fetch(CFG.api, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body), redirect: 'follow' })
+    var ctl = window.AbortController ? new AbortController() : null, wait = ms || API_TIMEOUT[action] || 45000;
+    var timer = ctl ? setTimeout(function () { ctl.abort(); }, wait) : null;
+    return fetch(CFG.api, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body), redirect: 'follow', signal: ctl ? ctl.signal : undefined })
       .then(function (r) { return r.json(); })
-      .catch(function () { return { ok: false, code: 'network', message: '인터넷 연결을 확인해 주세요. 잠시 뒤 다시 시도합니다.' }; });
+      .then(function (j) { clearTimeout(timer); return j; })
+      .catch(function (e) {
+        clearTimeout(timer);
+        if (e && e.name === 'AbortError') return { ok: false, code: 'timeout', message: '서버 응답이 늦어 다시 보냅니다.' };
+        return { ok: false, code: 'network', message: '인터넷 연결을 확인해 주세요. 잠시 뒤 다시 시도합니다.' };
+      });
   }
   function beacon(action, payload) {
     var body = JSON.stringify(Object.assign({ action: action }, payload || {}));

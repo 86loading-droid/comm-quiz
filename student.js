@@ -153,8 +153,17 @@
   }
 
   /* ---------- 4. 응시 ---------- */
-  function enter(sid) {
-    Q.api('enter', { sid: sid, studentNo: me.no, name: me.name, device: deviceInfo() }).then(function (r) {
+  // 이 화면(페이지)에서의 입장 번호: 응답이 늦어 다시 보낸 입장은 이탈로 세지 않는다. 새로고침하면 새 번호(재입장 = 이탈 1회, 기존 규칙 그대로)
+  var EID = 'e' + Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
+  function enter(sid, tries) {
+    tries = tries || 0;
+    if (!tries) { clear(); app.appendChild(h('p', { class: 'muted', id: 'enter-wait' }, [h('span', { class: 'spinner' }), ' 시험에 들어가는 중…'])); }
+    Q.api('enter', { sid: sid, studentNo: me.no, name: me.name, device: deviceInfo(), eid: EID }).then(function (r) {
+      // 접속이 몰리면 학생이 다시 누르지 않아도 조금씩 시차를 두고 자동으로 다시 들어간다
+      if (!r.ok && (r.code === 'busy' || r.code === 'network' || r.code === 'timeout') && tries < 10) {
+        var w = $('#enter-wait'); if (w) w.lastChild.textContent = ' 접속이 몰려 입장 대기 중입니다(' + (tries + 1) + '). 화면을 그대로 두세요.';
+        setTimeout(function () { enter(sid, tries + 1); }, 1500 + Math.random() * 3000 + tries * 1000); return;
+      }
       if (!r.ok) { if (r.code === 'name_mismatch' || r.code === 'not_in_roster' || r.code === 'bad_no') { showLogin(r.message); } else { Q.toast(r.message, 4000); showHome(); } return; }
       ssSet('quiz_active', JSON.stringify({ sid: sid }));
       if (r.status !== 'in_progress') { showResult(r); return; }
@@ -273,7 +282,7 @@
     var payload = { sid: ex.sid, token: ex.token, studentNo: me.no, answers: ex.answers };
     Q.api('save', payload).then(function (r) {
       var s = $('#saved');
-      if (!r.ok) { ex.dirty = true; if (s) s.textContent = '저장 실패 — 다시 시도'; ex.saveT = setTimeout(flushSave, 4000); return; }
+      if (!r.ok) { if (r.code === 'bad_token' || r.code === 'not_found') { finishedByServer(); return; } ex.dirty = true; if (s) s.textContent = '저장 다시 시도 중'; ex.saveT = setTimeout(flushSave, 3000 + Math.random() * 4000); return; }
       if (r.status && r.status !== 'in_progress') { finishedByServer(); return; }
       if (s) s.textContent = '저장됨 ' + Q.fmtTime(Date.now());
     });
@@ -287,10 +296,12 @@
   }
   function submit(auto) {
     if (!ex || ex.done) return;
-    ex.done = true; disarmGuards(); stopTimer(); clearTimeout(ex.saveT);
+    ex.done = true; ex.dirty = false; disarmGuards(); stopTimer(); clearTimeout(ex.saveT);
     var job = { sid: ex.sid, token: ex.token, studentNo: me.no, answers: ex.answers, auto: auto };
     backupLocal({ pendingSubmit: true, auto: !!auto });
-    sendSubmit(job);
+    // 시간 종료 자동 제출은 모두 같은 순간에 몰리므로 0~4초 흩어서 보낸다
+    if (auto) { app.innerHTML = ''; app.appendChild(h('p', { class: 'muted' }, [h('span', { class: 'spinner' }), ' 제출하는 중… 화면을 닫지 마세요.'])); setTimeout(function () { sendSubmit(job); }, Math.random() * 4000); }
+    else sendSubmit(job);
   }
   // 제출은 서버가 받을 때까지 자동으로 다시 보낸다(접속이 몰려도 학생이 다시 누를 필요 없음).
   // 창을 닫았다가 다시 열어도 이 기기에 남은 제출 대기분을 먼저 보낸다(재입장 이탈로 세지 않음).
@@ -299,7 +310,12 @@
     app.innerHTML = ''; app.appendChild(msg);
     (function send() {
       Q.api('submit', job).then(function (r) {
-        if (r.ok) { Q.sset('quiz_backup', ''); ssSet('quiz_active', ''); showResult(r); return; }
+        if (r.ok) {
+          Q.sset('quiz_backup', ''); ssSet('quiz_active', ''); showResult(r);
+          // 접수만 된 제출이면 잠시 뒤(학생마다 다른 시각) 채점을 재촉한다. 실패해도 교수 화면에서 채점된다.
+          if (r.queued) setTimeout(function () { Q.api('settle', {}); }, 5000 + Math.random() * 25000);
+          return;
+        }
         var fatal = r.code === 'bad_token' || r.code === 'not_found';
         if (!fatal && tries < 12) {
           tries++;
@@ -329,7 +345,12 @@
     if (!ex || ex.done || !ex.away) return;
     var ev = ex.away; ex.away = null;
     Q.api('violation', { sid: ex.sid, token: ex.token, studentNo: me.no, eventId: ev.id, kind: ev.kind, at: ev.at, phase: 'return', answers: ex.answers }).then(function (r) {
-      if (!r.ok) { ex.violations++; updDots(); if (ex.violations >= ex.limit) finishedByServer(); else warn(); return; }
+      if (!r.ok) {
+        // 서버가 받지 못했으면 같은 기록 번호로 뒤에서 다시 보낸다(서버는 같은 번호를 두 번 세지 않음)
+        var pl = { sid: ex.sid, token: ex.token, studentNo: me.no, eventId: ev.id, kind: ev.kind, at: ev.at, phase: 'return' };
+        (function again(n) { if (n > 5) return; setTimeout(function () { Q.api('violation', pl).then(function (x) { if (!x.ok && x.code !== 'bad_token') again(n + 1); else if (x.ok && x.status && x.status !== 'in_progress' && ex && !ex.done) finishedByServer(); }); }, 3000 + Math.random() * 5000 * n); })(1);
+        ex.violations++; updDots(); if (ex.violations >= ex.limit) finishedByServer(); else warn(); return;
+      }
       ex.violations = r.violations; updDots();
       if (r.status !== 'in_progress') { finishedByServer(r); return; }
       warn();
@@ -388,7 +409,7 @@
     if (!ex) return;
     ex.done = true; disarmGuards(); stopTimer();
     if (warnOpen && warnOpen.parentNode) warnOpen.parentNode.removeChild(warnOpen);
-    Q.api('enter', { sid: ex.sid, studentNo: me.no, name: me.name, device: deviceInfo() }).then(function (r) {
+    Q.api('enter', { sid: ex.sid, studentNo: me.no, name: me.name, device: deviceInfo(), eid: EID }).then(function (r) {
       ssSet('quiz_active', '');
       if (r.ok) showResult(r); else showHome();
     });

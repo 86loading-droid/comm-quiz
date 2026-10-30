@@ -337,6 +337,18 @@
       h('div', { class: 'row' }, [
         s.status !== 'open' ? h('button', { class: 'btn accent sm', text: '응시 열기', onclick: function () { upd({ status: 'open' }); } }) : h('button', { class: 'btn sm', text: '응시 마감', onclick: function () { Q.confirmBox('응시를 마감할까요?', '<p>응시 중인 학생은 더 이상 들어올 수 없고, 이미 연 학생은 제출만 할 수 있습니다.</p>', '마감').then(function (ok) { if (ok) upd({ status: 'closed' }); }); } }),
         h('button', { class: 'btn ghost sm', text: s.released ? '결과 비공개로' : '결과 공개', onclick: function () { upd({ released: !s.released }); } }),
+        h('button', { class: 'btn accent sm', text: '제출 마무리·일괄 채점', onclick: function () {
+          var stuck = at.filter(function (a) { return a.status === 'in_progress'; });
+          Q.confirmBox('제출 마무리와 일괄 채점', (stuck.length ? '<p>응시 중으로 남은 <b>' + stuck.length + '명</b>(' + stuck.map(function (a) { return Q.esc(a.name) + ' ' + Q.esc(a.no); }).join(', ') + ')을 마지막으로 저장된 답으로 제출 처리합니다.</p>' : '<p>응시 중으로 남은 학생이 없습니다.</p>') +
+            '<p>모든 학생 점수를 지금 문항·정답 기준으로 다시 채점해 저장합니다. 교수님이 확정한 서술형 점수는 그대로 둡니다.</p>' + (s.status === 'open' && stuck.length ? '<p class="note warn">아직 응시 중인 학생이 있다면 그 학생의 시험도 끝납니다. 먼저 「응시 마감」을 권합니다.</p>' : ''), '실행').then(function (ok) {
+            if (!ok) return;
+            call('finalizeSession', { id: s.id }).then(function (x) {
+              if (!x.ok) { Q.toast(x.message, 4000); return; }
+              Q.toast('제출 마무리 ' + x.finalized.length + '명, 점수 고침 ' + x.regraded + '건을 저장했습니다.', 4500);
+              reload(); reloadList();
+            }).catch(function () { });
+          });
+        } }),
         h('button', { class: 'btn ghost sm', text: '출제 문항 보기', onclick: function () { questionsView(s, at); } }),
         h('button', { class: 'btn ghost sm', text: 'CSV 내려받기', onclick: function () { csv(s, at); } }),
         h('button', { class: 'btn danger sm', text: '회기 삭제', onclick: function () { Q.confirmBox('회기를 지울까요?', '<p>이 회기의 문항과 학생 응시 기록 ' + at.length + '건이 모두 지워집니다. 되돌릴 수 없습니다.</p>', '삭제').then(function (ok) { if (ok) call('deleteSession', { id: s.id }).then(function () { openSid = null; box.innerHTML = ''; reloadList(); }); }); } })
@@ -354,7 +366,7 @@
     ]));
     var tb = h('tbody');
     at.forEach(function (a) {
-      var st = a.status === 'in_progress' ? h('span', { class: 'chip acc', text: '응시 중 ' + a.answered + '/' + s.questions.length }) : a.status === 'terminated' ? h('span', { class: 'chip bad', text: '이탈 종료(0점)' }) : h('span', { class: 'chip ok', text: a.endReason === 'timeout' || a.endReason === 'auto' ? '시간 종료 제출' : '제출' });
+      var st = a.status === 'in_progress' ? h('span', { class: 'chip acc', text: '응시 중 ' + a.answered + '/' + s.questions.length }) : a.status === 'terminated' ? h('span', { class: 'chip bad', text: '이탈 종료(0점)' }) : h('span', { class: 'chip ok', text: a.endReason === 'timeout' || a.endReason === 'auto' ? '시간 종료 제출' : a.endReason === 'admin_finalize' ? '교수 제출 처리' : '제출' });
       var vio = a.violations.length ? a.violations.map(function (v) { return Q.fmtTime(v.at) + ' ' + (Q.KIND_LABEL[v.kind] || v.kind); }).join('\n') : '';
       tb.appendChild(h('tr', {}, [
         h('td', { text: a.no }), h('td', { text: a.name }), h('td', {}, [st]),
@@ -406,6 +418,7 @@
       h('h2', { text: a.name + ' (' + a.no + ') 답안' }),
       h('div', { class: 'row' }, [
         a.violations.length ? h('button', { class: 'btn ghost sm', text: '이탈 1회 취소', onclick: function () { Q.confirmBox('이탈 기록 1회를 취소할까요?', '<p>가장 최근 기록을 취소합니다. 이탈로 종료된 학생이면 응시 중 상태로 돌아가 이어서 풀 수 있습니다.</p>', '취소 처리').then(function (ok) { if (ok) call('forgive', { sid: s.id, studentNo: a.no }).then(function () { sheetHost.innerHTML = ''; reload(); }); }); } }) : null,
+        a.status === 'in_progress' ? h('button', { class: 'btn sm', text: '제출 처리(저장된 답으로)', onclick: function () { call('finalizeSession', { id: s.id, studentNo: a.no }).then(function (x) { if (!x.ok) { Q.toast(x.message); return; } Q.toast(a.name + ' 제출 처리 · ' + (x.finalized[0] ? x.finalized[0].score + '점' : '')); sheetHost.innerHTML = ''; reload(); }).catch(function () { }); } }) : null,
         h('button', { class: 'btn danger sm', text: '재응시 허용(기록 지움)', onclick: function () { Q.confirmBox('응시 기록을 지울까요?', '<p>' + Q.esc(a.name) + ' 학생의 이 회기 답안·점수·이탈 기록이 지워지고 처음부터 다시 볼 수 있습니다.</p>', '지우기').then(function (ok) { if (ok) call('resetAttempt', { sid: s.id, studentNo: a.no }).then(function () { sheetHost.innerHTML = ''; reload(); }); }); } }),
         h('button', { class: 'btn ghost sm', text: '닫기', onclick: function () { sheetHost.innerHTML = ''; } })
       ])

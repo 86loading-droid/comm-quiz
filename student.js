@@ -258,8 +258,14 @@
   }
   function markDirty(now) {
     ex.dirty = true; clearTimeout(ex.saveT);
-    ex.saveT = setTimeout(flushSave, now ? 600 : 2500);
+    ex.saveT = setTimeout(flushSave, now ? 3000 : 6000);   // 저장 요청을 줄여 서버 대기열을 짧게
+    backupLocal();
     var s = $('#saved'); if (s) s.textContent = '저장 대기';
+  }
+  // 서버에 닿지 못해도 답이 사라지지 않게 이 기기에 같이 둔다
+  function backupLocal(extra) {
+    if (!ex) return;
+    Q.sset('quiz_backup', JSON.stringify(Object.assign({ sid: ex.sid, token: ex.token, no: me.no, name: me.name, answers: ex.answers, at: Date.now() }, extra || {})));
   }
   function flushSave() {
     if (!ex || !ex.dirty || ex.done) return;
@@ -281,14 +287,29 @@
   }
   function submit(auto) {
     if (!ex || ex.done) return;
-    ex.done = true; disarmGuards(); stopTimer();
-    app.innerHTML = ''; app.appendChild(h('p', { class: 'muted' }, [h('span', { class: 'spinner' }), ' 제출하는 중…']));
-    var tries = 0;
+    ex.done = true; disarmGuards(); stopTimer(); clearTimeout(ex.saveT);
+    var job = { sid: ex.sid, token: ex.token, studentNo: me.no, answers: ex.answers, auto: auto };
+    backupLocal({ pendingSubmit: true, auto: !!auto });
+    sendSubmit(job);
+  }
+  // 제출은 서버가 받을 때까지 자동으로 다시 보낸다(접속이 몰려도 학생이 다시 누를 필요 없음).
+  // 창을 닫았다가 다시 열어도 이 기기에 남은 제출 대기분을 먼저 보낸다(재입장 이탈로 세지 않음).
+  function sendSubmit(job) {
+    var tries = 0, msg = h('p', { class: 'muted' }, [h('span', { class: 'spinner' }), ' 제출하는 중… 화면을 닫지 마세요.']);
+    app.innerHTML = ''; app.appendChild(msg);
     (function send() {
-      Q.api('submit', { sid: ex.sid, token: ex.token, studentNo: me.no, answers: ex.answers, auto: auto }).then(function (r) {
-        if (!r.ok && r.code === 'network' && tries++ < 5) { setTimeout(send, 2500); return; }
-        if (!r.ok) { app.innerHTML = ''; app.appendChild(errBox(r)); app.appendChild(h('button', { class: 'btn', text: '다시 제출', onclick: function () { tries = 0; send(); } })); return; }
-        ssSet('quiz_active', ''); showResult(r);
+      Q.api('submit', job).then(function (r) {
+        if (r.ok) { Q.sset('quiz_backup', ''); ssSet('quiz_active', ''); showResult(r); return; }
+        var fatal = r.code === 'bad_token' || r.code === 'not_found';
+        if (!fatal && tries < 12) {
+          tries++;
+          msg.lastChild.textContent = ' 접속이 몰려 제출을 다시 보내는 중입니다(' + tries + '회). 화면을 닫지 마세요.';
+          setTimeout(send, Math.min(30000, 2000 * tries) + Math.random() * 2000); return;
+        }
+        if (fatal) Q.sset('quiz_backup', '');
+        app.innerHTML = ''; app.appendChild(errBox(r));
+        app.appendChild(h('p', { class: 'small muted', text: '답은 이 기기와 서버에 저장되어 있습니다. 아래 버튼을 누르거나 교수님께 알려 주세요.' }));
+        app.appendChild(h('button', { class: 'btn accent', text: '다시 제출', onclick: function () { sendSubmit(job); } }));
       });
     })();
   }
@@ -432,6 +453,8 @@
   /* ---------- 시작 ---------- */
   try { me = JSON.parse(ssGet('quiz_me') || 'null'); if (me && !me.no) me = null; } catch (e) { me = null; }
   var act = null; try { act = JSON.parse(ssGet('quiz_active') || 'null'); } catch (e) { }
-  if (me && act && act.sid) enter(act.sid);   // 새로고침·재입장: 서버가 이탈 여부를 판정
+  var bk = null; try { bk = JSON.parse(Q.sget('quiz_backup') || 'null'); } catch (e) { }
+  if (me && bk && bk.pendingSubmit && bk.no === me.no) { ex = null; sendSubmit({ sid: bk.sid, token: bk.token, studentNo: bk.no, answers: bk.answers, auto: bk.auto }); }   // 보내지 못한 제출 먼저
+  else if (me && act && act.sid) enter(act.sid);   // 새로고침·재입장: 서버가 이탈 여부를 판정
   else if (me) showHome(); else showLogin();
 })();

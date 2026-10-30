@@ -1,7 +1,7 @@
 /* 공통: 서버 호출, 화면 도구, 범위 표시 */
 (function () {
   var CFG = window.QUIZ_CONFIG || {};
-  var APP_VERSION = '1.2.0';
+  var APP_VERSION = '1.2.1';
   window.APP_VERSION = APP_VERSION;
 
   function api(action, payload) {

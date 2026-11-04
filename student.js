@@ -14,6 +14,8 @@
     var ua = navigator.userAgent, t = /iPad|Tablet|SM-T|Tab/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) ? '태블릿' : /Mobi|Android|iPhone/i.test(ua) ? '휴대폰' : '노트북·PC';
     return t + ' ' + window.screen.width + 'x' + window.screen.height;
   }
+  // 휴대폰·태블릿: 가상 자판·자판 기능·상단 막대 때문에 화면이 보이는 채로 초점만 잃는 일이 잦다 → 초점 잃음은 이탈로 세지 않고 기록만
+  var TOUCH = /^(태블릿|휴대폰)/.test(deviceInfo());
   function errBox(r) { return h('div', { class: 'note bad', role: 'alert', text: r && r.message ? r.message : '잠시 뒤 다시 시도해 주세요.' }); }
 
   /* ---------- 1. 입장 ---------- */
@@ -60,6 +62,8 @@
     var hist = h('div', { class: 'card', id: 'hist' }, [h('h2', { text: '내 점수' }), h('p', { class: 'muted small', text: '불러오는 중…' })]);
     app.appendChild(head); app.appendChild(list); app.appendChild(hist);
     Q.api('listOpen').then(function (r) {
+      // 서버가 새 판인데 이 화면이 예전 판(며칠 전 열어 둔 탭 등)이면 한 번 새로 불러온다
+      if (r.ok && r.appVersion && r.appVersion !== window.APP_VERSION && ssGet('quiz_reload') !== r.appVersion) { ssSet('quiz_reload', r.appVersion); location.reload(); return; }
       list.innerHTML = '';
       list.appendChild(h('h2', { text: '응시할 수 있는 시험' }));
       if (!r.ok) { list.appendChild(errBox(r)); return; }
@@ -332,7 +336,8 @@
 
   /* ---------- 화면 이탈 감시 ----------
    * hidden(다른 앱·탭·화면 꺼짐·닫기): 바로 1회
-   * blur(창은 보이나 다른 창 선택): 2초 넘게 이어지면 1회
+   * blur(창은 보이나 다른 창 선택): 노트북·PC에서만 2초 넘게 이어지면 1회.
+   *   휴대폰·태블릿은 가상 자판 등으로 초점만 잃는 일이 있어 세지 않고 「초점 이탈(미집계)」로 시각·길이만 남긴다(교수 화면에 표시).
    * 이탈이 시작되면 그 순간 서버에 알리고(sendBeacon), 돌아오면 같은 번호로 한 번 더 알려 확인한다(서버는 중복을 세지 않음).
    * 앱을 닫고 다시 들어오면 서버가 입장 때 판정한다(같은 이탈 중이면 추가로 세지 않음). */
   function onAway(kind) {
@@ -356,13 +361,22 @@
       warn();
     });
   }
-  function onVis() { if (document.visibilityState === 'hidden') onAway('hidden'); else onBack(); }
+  function onVis() { if (document.visibilityState === 'hidden') { if (ex) ex.note = null; onAway('hidden'); } else onBack(); }
+  function onTouchUse() { if (ex && ex.note && document.hasFocus()) endNote(); }
   function onBlur() {
     if (!ex || ex.done) return;
     clearTimeout(ex.blurT);
+    if (TOUCH) { if (!ex.note) ex.note = { id: 'nt' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), at: nowS() }; return; }
     ex.blurT = setTimeout(function () { if (!document.hasFocus() && document.visibilityState === 'visible') onAway('blur'); }, 2000);
   }
-  function onFocus() { if (!ex) return; clearTimeout(ex.blurT); if (ex.away && document.visibilityState === 'visible') onBack(); }
+  // 휴대폰·태블릿의 초점 잃음이 끝났을 때: 2초 넘었으면 기록만 보낸다(경고 없음, 이탈 수에 넣지 않음)
+  function endNote() {
+    if (!ex || !ex.note) return;
+    var n = ex.note, dur = nowS() - n.at; ex.note = null;
+    if (dur < 2000 || ex.done) return;
+    Q.api('violation', { sid: ex.sid, token: ex.token, studentNo: me.no, eventId: n.id, kind: 'blur', at: n.at, dur: dur, phase: 'note', detail: deviceInfo() });
+  }
+  function onFocus() { if (!ex) return; clearTimeout(ex.blurT); endNote(); if (ex.away && document.visibilityState === 'visible') onBack(); }
   function onHide() { if (ex && !ex.done) { onAway('hidden'); flushBeacon(); } }
   function flushBeacon() { if (ex && ex.dirty) Q.beacon('save', { sid: ex.sid, token: ex.token, studentNo: me.no, answers: ex.answers }); }
   function block(e) { if (ex && !ex.done) { e.preventDefault(); } }
@@ -376,6 +390,7 @@
     window.addEventListener('blur', onBlur);
     window.addEventListener('focus', onFocus);
     window.addEventListener('pagehide', onHide);
+    document.addEventListener('pointerdown', onTouchUse, true);
     document.addEventListener('contextmenu', block);
     document.addEventListener('copy', block);
     document.addEventListener('cut', block);
@@ -387,6 +402,7 @@
     window.removeEventListener('blur', onBlur);
     window.removeEventListener('focus', onFocus);
     window.removeEventListener('pagehide', onHide);
+    document.removeEventListener('pointerdown', onTouchUse, true);
     document.removeEventListener('contextmenu', block);
     document.removeEventListener('copy', block);
     document.removeEventListener('cut', block);

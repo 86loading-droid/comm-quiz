@@ -1,6 +1,13 @@
 /* 교수 화면: 시험 범위 설정·자동 출제·회기 운영·채점·성적 그래프 */
 (function () {
-  var Q = window.Q, h = Q.h, $ = Q.$, app = $('#app');
+
+  // 휴대폰·태블릿 초점 이탈(이탈 수에 넣지 않음): 횟수와 가장 긴 시간, 30초 넘는 것은 「확인 필요」
+  function noteHtml(a) {
+    var ns = a.notes || []; if (!ns.length) return '';
+    var max = 0, long = 0; ns.forEach(function (n) { if (n.dur != null && n.dur > max) max = n.dur; if (n.long) long++; });
+    var list = ns.map(function (n) { return Q.fmtTime(n.at) + ' 초점 이탈' + (n.dur != null ? ' ' + Math.round(n.dur / 1000) + '초' : '') + (n.reclassified ? ' (이탈에서 옮김)' : ''); }).join('\n');
+    return '<div class="tiny" style="margin-top:4px;color:' + (long ? 'var(--warn)' : 'var(--muted)') + '" title="' + Q.esc(list) + '">초점 이탈(미집계) ' + ns.length + '회' + (max ? ' · 최장 ' + Math.round(max / 1000) + '초' : '') + (long ? ' · 확인 필요' : '') + '</div>';
+  }  var Q = window.Q, h = Q.h, $ = Q.$, app = $('#app');
   var TOK = null, STATS = null, charts = [];
   var CIRC = '①②③④⑤⑥';
   $('#ver').textContent = '판 ' + window.APP_VERSION + (Q.isDemo() ? ' · 체험판(기록은 이 기기에만)' : '');
@@ -344,7 +351,7 @@
             if (!ok) return;
             call('finalizeSession', { id: s.id }).then(function (x) {
               if (!x.ok) { Q.toast(x.message, 4000); return; }
-              Q.toast('제출 마무리 ' + x.finalized.length + '명, 접수분 채점 ' + (x.queuedGraded || 0) + '명, 점수 고침 ' + x.regraded + '건을 저장했습니다.', 4500);
+              Q.toast('제출 마무리 ' + x.finalized.length + '명, 접수분 채점 ' + (x.queuedGraded || 0) + '명, 점수 고침 ' + x.regraded + '건' + (x.reclassified ? ', 초점 이탈 미집계로 옮김 ' + x.reclassified + '명' : '') + '을 저장했습니다.', 4500);
               reload(); reloadList();
             }).catch(function () { });
           });
@@ -370,7 +377,7 @@
       var vio = a.violations.length ? a.violations.map(function (v) { return Q.fmtTime(v.at) + ' ' + (Q.KIND_LABEL[v.kind] || v.kind); }).join('\n') : '';
       tb.appendChild(h('tr', {}, [
         h('td', { text: a.no }), h('td', { text: a.name }), h('td', {}, [st]),
-        h('td', { style: 'white-space:pre-line', html: a.violations.length ? '<b style="color:' + css('--bad') + '">' + a.violations.length + '회</b><div class="tiny muted">' + Q.esc(vio) + '</div>' : '<span class="muted">없음</span>' }),
+        h('td', { style: 'white-space:pre-line', html: (a.violations.length ? '<b style="color:' + css('--bad') + '">' + a.violations.length + '회</b><div class="tiny muted">' + Q.esc(vio) + '</div>' : '<span class="muted">없음</span>') + noteHtml(a) }),
         h('td', { html: '<b>' + scoreOf(a) + '</b>' + (a.pending && a.status === 'submitted' ? ' <span class="chip warn">서술 채점</span>' : '') }),
         h('td', { class: 'tiny muted', text: Q.fmtDate(a.startedAt) + (a.submittedAt ? ' → ' + Q.fmtTime(a.submittedAt) : '') + '\n' + (a.device || '') }),
         h('td', {}, [h('button', { class: 'btn ghost sm', text: '답안', onclick: function () { sheet(s, a, reload); } })])
@@ -467,7 +474,7 @@
     var head = ['학번', '이름', '상태', '점수', '이탈 횟수', '이탈 기록', '입장', '제출'].concat(s.questions.map(function (q, i) { return (i + 1) + '번(' + Q.TYPE_LABEL[q.type] + ')'; }));
     var rows = at.map(function (a) {
       return [a.no, a.name, a.status === 'terminated' ? '이탈 종료' : a.status === 'in_progress' ? '응시 중' : '제출', a.score == null ? '' : a.score, a.violations.length,
-        a.violations.map(function (v) { return Q.fmtTime(v.at) + ' ' + (Q.KIND_LABEL[v.kind] || v.kind); }).join('; '), Q.fmtDate(a.startedAt), a.submittedAt ? Q.fmtDate(a.submittedAt) : '']
+        a.violations.map(function (v) { return Q.fmtTime(v.at) + ' ' + (Q.KIND_LABEL[v.kind] || v.kind); }).concat((a.notes || []).map(function (n) { return Q.fmtTime(n.at) + ' 초점 이탈(미집계)' + (n.dur != null ? ' ' + Math.round(n.dur / 1000) + '초' : ''); })).join('; '), Q.fmtDate(a.startedAt), a.submittedAt ? Q.fmtDate(a.submittedAt) : '']
         .concat(s.questions.map(function (q) { var g = a.items[q.qid]; return g ? Math.round(g.frac * 100) / 100 : ''; }));
     });
     var txt = '﻿' + [head].concat(rows).map(function (r) { return r.map(function (c) { c = String(c); return /[",\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(','); }).join('\r\n');

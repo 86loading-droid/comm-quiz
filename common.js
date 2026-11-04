@@ -1,7 +1,7 @@
 /* 공통: 서버 호출, 화면 도구, 범위 표시 */
 (function () {
   var CFG = window.QUIZ_CONFIG || {};
-  var APP_VERSION = '1.3.1';
+  var APP_VERSION = '1.4.0';
   window.APP_VERSION = APP_VERSION;
 
   // 응답이 오지 않는 요청을 끝없이 기다리지 않는다(접속이 몰릴 때 한두 건이 멈추는 경우가 있음) → 시간이 지나면 timeout으로 돌려주고 호출한 쪽이 다시 보낸다

@@ -46,7 +46,7 @@
   }
 
   /* ---------- 틀 ---------- */
-  var TABS = [['make', '출제'], ['run', '응시 현황·채점'], ['grade', '성적 그래프'], ['set', '명단·문항은행']];
+  var TABS = [['make', '출제'], ['retest', '다시 풀기'], ['run', '응시 현황·채점'], ['grade', '성적 그래프'], ['set', '명단·문항은행']];
   var curTab = 'make', pollT = null;
   function boot() {
     call('bankStats').then(function (r) { if (!r.ok) { showLogin(r.message); return; } STATS = r; frame(); }).catch(function () { });
@@ -62,7 +62,7 @@
     app.appendChild(tabs);
     var body = h('div', { id: 'tab-body' }); app.appendChild(body);
     clearInterval(pollT); killCharts();
-    ({ make: tabMake, run: tabRun, grade: tabGrade, set: tabSet })[curTab](body);
+    ({ make: tabMake, retest: tabRetest, run: tabRun, grade: tabGrade, set: tabSet })[curTab](body);
   }
 
   /* ---------- 출제 ---------- */
@@ -84,7 +84,8 @@
     return c;
   }
   function tabMake(body) {
-    var st = draft && draft.form ? draft.form : { sCh: chapters()[0].id, sNode: chapters()[0].id, eCh: chapters()[0].id, eNode: chapters()[0].id, counts: { mc: 4, short: 2, essay: 1, imyong: 1, orig: 1 }, excludeUsed: true, timeLimit: 15, showResult: 'after', shuffle: true };
+    if (draft && draft.retest) draft = null;   // 다시 풀기 묶음은 출제 탭에서 이어 쓰지 않는다
+    var st = draft && draft.form && draft.form.counts ? draft.form : { sCh: chapters()[0].id, sNode: chapters()[0].id, eCh: chapters()[0].id, eNode: chapters()[0].id, counts: { mc: 4, short: 2, essay: 1, imyong: 1, orig: 1 }, excludeUsed: true, timeLimit: 15, showResult: 'after', shuffle: true };
     var sCh = h('select', { 'aria-label': '시작 장' }), sNode = h('select', { 'aria-label': '시작 위치' });
     var eCh = h('select', { 'aria-label': '끝 장' }), eNode = h('select', { 'aria-label': '끝 위치' });
     chapters().forEach(function (c) {
@@ -195,6 +196,139 @@
     [exUsed, shuffle, tl, showRes].forEach(function (x) { x.addEventListener('change', function () { if (draft) draft.form = form(); }); });
     body._form = form;
   }
+
+  /* ---------- 다시 풀기: 정답률 낮은 문항 다시 내기 ---------- */
+  // RT.picks: {sid: {qid: true}}  RT.groups: retestBuild 결과(묶음마다 saved 표시)
+  var RT = { threshold: 50, mode: 'same', perItem: 1, split: false, limit: 30, timeLimit: 15, showResult: 'after', shuffle: true, data: null, picks: null, groups: null };
+  function rtCount() { var n = 0; Object.keys(RT.picks || {}).forEach(function (sid) { n += Object.keys(RT.picks[sid]).length; }); return n; }
+  function tabRetest(body) {
+    var th = h('input', { type: 'number', min: '10', max: '100', step: '5', value: String(RT.threshold), style: 'max-width:90px', 'aria-label': '정답률 기준(%)' });
+    var listBox = h('div', { id: 'rt-list' }, [h('p', { class: 'muted' }, [h('span', { class: 'spinner' }), ' 회기별 정답률을 계산하는 중…'])]);
+    var pickOut = h('b', { 'aria-live': 'polite' });
+    function load() {
+      RT.threshold = Math.max(10, Math.min(100, Number(th.value) || 50)); th.value = String(RT.threshold);
+      listBox.innerHTML = ''; listBox.appendChild(h('p', { class: 'muted' }, [h('span', { class: 'spinner' }), ' 회기별 정답률을 계산하는 중…']));
+      call('weakItems', { threshold: RT.threshold }).then(function (r) {
+        if (!r.ok) { listBox.innerHTML = ''; listBox.appendChild(h('div', { class: 'note bad', text: r.message })); return; }
+        var first = !RT.data; RT.data = r;
+        if (first || !RT.picks) {   // 처음에는 가장 최근 응시 회기의 기준 미만 문항을 모두 골라 둔다
+          RT.picks = {};
+          var latest = r.sessions.filter(function (s) { return s.takers && s.weak.length; })[0];
+          if (latest) { RT.picks[latest.id] = {}; latest.weak.forEach(function (x) { RT.picks[latest.id][x.qid] = true; }); }
+        } else {   // 기준을 바꾸면 이제 기준 밖이 된 문항은 고른 목록에서 뺀다
+          r.sessions.forEach(function (s) { var p = RT.picks[s.id]; if (!p) return; Object.keys(p).forEach(function (q) { if (!s.weak.some(function (x) { return x.qid === q; })) delete p[q]; }); });
+        }
+        drawList();
+      }).catch(function () { });
+    }
+    function drawList() {
+      listBox.innerHTML = '';
+      var r = RT.data; if (!r) return;
+      if (!r.sessions.length) { listBox.appendChild(h('p', { class: 'muted', text: '아직 연 시험이 없습니다.' })); return; }
+      r.sessions.forEach(function (s) {
+        var sel = RT.picks[s.id] || {}, nSel = Object.keys(sel).length;
+        var all = h('input', { type: 'checkbox', checked: s.weak.length > 0 && nSel === s.weak.length, disabled: !s.weak.length, 'aria-label': s.title + ' 기준 미만 문항 모두 고르기' });
+        all.addEventListener('change', function () {
+          RT.picks[s.id] = {}; if (all.checked) s.weak.forEach(function (x) { RT.picks[s.id][x.qid] = true; });
+          drawList();
+        });
+        var blk = h('div', { class: 'card flat', style: 'margin:10px 0' });
+        blk.appendChild(h('label', { class: 'row', style: 'align-items:center' }, [all,
+          h('b', { text: s.title }), s.retest ? h('span', { class: 'chip', text: '다시 풀기 회기' }) : null,
+          h('span', { class: 'small muted', text: Q.fmtDate(s.at) + ' · 응시 ' + s.takers + '명 · ' + RT.threshold + '% 미만 ' + s.weak.length + ' / ' + s.n + '문항' + (nSel ? ' · ' + nSel + '개 고름' : '') })]));
+        if (!s.takers) blk.appendChild(h('p', { class: 'small muted', text: '제출한 학생이 없어 정답률을 낼 수 없습니다.' }));
+        else if (!s.weak.length) blk.appendChild(h('p', { class: 'small muted', text: '기준 미만 문항이 없습니다.' }));
+        s.weak.forEach(function (x) {
+          var c = h('input', { type: 'checkbox', checked: !!sel[x.qid] });
+          c.addEventListener('change', function () { RT.picks[s.id] = RT.picks[s.id] || {}; if (c.checked) RT.picks[s.id][x.qid] = true; else delete RT.picks[s.id][x.qid]; drawList(); });
+          blk.appendChild(h('label', { class: 'row small', style: 'align-items:flex-start;margin:6px 0 0 22px' }, [c,
+            h('b', { text: x.no + '번' }), h('span', { class: 'chip', text: Q.TYPE_LABEL[x.type] }),
+            x.kind === 'imyong' ? h('span', { class: 'chip warn', text: '기출 변형' }) : x.kind === 'orig' ? h('span', { class: 'chip bad', text: '기출 원문' }) : null,
+            h('span', { class: 'chip ' + (x.rate < 30 ? 'bad' : 'warn'), text: '정답률 ' + x.rate + '%' }),
+            h('span', { style: 'flex:1 1 240px;min-width:0', text: x.stem.length > 90 ? x.stem.slice(0, 90) + '…' : x.stem })]));
+        });
+        listBox.appendChild(blk);
+      });
+      pickOut.textContent = '고른 문항 ' + rtCount() + '개';
+    }
+    th.addEventListener('change', load);
+    // 만들기 설정
+    function radio(name, val, cur, label, onpick) { var r = h('input', { type: 'radio', name: name, value: val, checked: cur === val }); r.addEventListener('change', function () { if (r.checked) onpick(val); }); return h('label', { class: 'row small' }, [r, h('span', { text: label })]); }
+    var per = h('select', { 'aria-label': '원래 문항 1개당 새 문항 수' }, [1, 2, 3].map(function (n) { return h('option', { value: String(n), text: n + '개' }); })); per.value = String(RT.perItem);
+    per.addEventListener('change', function () { RT.perItem = Number(per.value); });
+    var perWrap = h('label', { class: 'field', style: RT.mode === 'same' ? 'display:none' : '' }, [h('span', { text: '원래 문항 1개당 새 문항' }), per]);
+    var lim = h('input', { type: 'number', min: '1', max: '30', value: String(RT.limit), style: 'max-width:100px' }); lim.addEventListener('change', function () { RT.limit = Math.max(1, Math.min(30, Number(lim.value) || 30)); lim.value = String(RT.limit); });
+    var tl = h('input', { type: 'number', min: '0', max: '180', value: String(RT.timeLimit), style: 'max-width:100px' }); tl.addEventListener('change', function () { RT.timeLimit = Number(tl.value) || 0; });
+    var showRes = h('select', {}, [h('option', { value: 'after', text: '교수 확인 뒤 공개' }), h('option', { value: 'immediate', text: '제출하면 바로 점수·해설 공개' })]); showRes.value = RT.showResult; showRes.addEventListener('change', function () { RT.showResult = showRes.value; });
+    var shuf = h('input', { type: 'checkbox', checked: RT.shuffle }); shuf.addEventListener('change', function () { RT.shuffle = shuf.checked; });
+    var buildBtn = h('button', { class: 'btn accent', type: 'button', text: '다시 풀기 문항 만들기' });
+    var groupsBox = h('div', { id: 'rt-groups' });
+    var previewBox = h('div', { id: 'preview' });
+    buildBtn.addEventListener('click', function () {
+      var picks = []; Object.keys(RT.picks || {}).forEach(function (sid) { Object.keys(RT.picks[sid]).forEach(function (qid) { picks.push({ sid: sid, qid: qid }); }); });
+      if (!picks.length) { Q.toast('다시 낼 문항을 하나 이상 고르세요.'); return; }
+      buildBtn.disabled = true; buildBtn.textContent = '만드는 중…';
+      call('retestBuild', { picks: picks, mode: RT.mode, perItem: RT.perItem, split: RT.split, limit: RT.limit, threshold: RT.threshold }).then(function (r) {
+        buildBtn.disabled = false; buildBtn.textContent = '다시 풀기 문항 만들기';
+        if (!r.ok) { Q.toast(r.message, 4000); return; }
+        RT.groups = r.groups.map(function (g) { g.saved = null; return g; });
+        draft = null; previewBox.innerHTML = '';
+        drawGroups();
+        if (RT.groups.length === 1) openGroup(0);
+        else groupsBox.scrollIntoView({ behavior: 'smooth' });
+      }).catch(function () { buildBtn.disabled = false; buildBtn.textContent = '다시 풀기 문항 만들기'; });
+    });
+    function drawGroups() {
+      groupsBox.innerHTML = '';
+      if (!RT.groups || !RT.groups.length) return;
+      var card = h('div', { class: 'card' }, [h('p', { class: 'kicker', text: '3단계' }), h('h2', { text: '만든 묶음 ' + RT.groups.length + '개' }),
+        h('p', { class: 'small muted', text: '묶음마다 「확인·고치기」에서 문항을 보고 바꾸거나 뺀 뒤 시험을 열거나 임시 저장하세요.' })]);
+      RT.groups.forEach(function (g, i) {
+        card.appendChild(h('div', { class: 'row', style: 'margin:8px 0;align-items:center' }, [
+          h('b', { text: g.title }), h('span', { class: 'chip', text: g.questions.length + '문항' }),
+          g.saved ? h('span', { class: 'chip ok', text: g.saved === 'open' ? '시험 열림' : '임시 저장됨' }) : null,
+          h('span', { style: 'flex:1' }),
+          g.saved ? null : h('button', { class: 'btn sm', type: 'button', text: '확인·고치기', onclick: function () { openGroup(i); } })]));
+        (g.notes || []).forEach(function (t) { card.appendChild(h('p', { class: 'tiny muted', style: 'margin:0 0 4px 4px', text: '· ' + t })); });
+      });
+      groupsBox.appendChild(card);
+    }
+    function openGroup(i) {
+      var g = RT.groups[i];
+      draft = { form: { timeLimit: RT.timeLimit, showResult: RT.showResult, shuffle: RT.shuffle, excludeUsed: true, preferImportant: true }, range: null, rangeLabel: g.rangeLabel,
+        questions: g.questions, shortage: [], title: g.title, retest: { threshold: RT.threshold, mode: RT.mode, sources: g.sources }, groupIdx: i };
+      renderDraft(previewBox);
+      previewBox.scrollIntoView({ behavior: 'smooth' });
+    }
+    body.appendChild(h('div', { class: 'card' }, [
+      h('p', { class: 'kicker', text: '1단계' }), h('h2', { text: '정답률 낮은 문항 고르기' }),
+      h('p', { class: 'small muted', text: '회기마다 제출한 학생의 문항별 정답률을 계산해 기준 미만 문항을 보여 줍니다(서술형은 교수 판정, 없으면 자동 예비 채점). 한 회기만 고르면 그 회기의 다시 풀기, 여러 회기를 고르면 따로 또는 모아서 만들 수 있습니다.' }),
+      h('div', { class: 'row', style: 'align-items:center;margin:8px 0' }, [h('span', { text: '정답률 기준' }), th, h('span', { text: '% 미만' }), h('button', { class: 'btn ghost sm', type: 'button', text: '다시 찾기', onclick: load }), h('span', { style: 'flex:1' }), pickOut]),
+      listBox
+    ]));
+    body.appendChild(h('div', { class: 'card' }, [
+      h('p', { class: 'kicker', text: '2단계' }), h('h2', { text: '어떻게 다시 낼까요' }),
+      h('div', { class: 'grid2' }, [
+        h('div', {}, [h('p', { class: 'small', html: '<b>문항</b>' }),
+          radio('rt-mode', 'same', RT.mode, '같은 문항 그대로', function (v) { RT.mode = v; perWrap.style.display = 'none'; }),
+          radio('rt-mode', 'similar', RT.mode, '같은 단원의 새 문항(문항은행에서)', function (v) { RT.mode = v; perWrap.style.display = ''; }),
+          radio('rt-mode', 'both', RT.mode, '원래 문항 + 같은 단원 새 문항', function (v) { RT.mode = v; perWrap.style.display = ''; }), perWrap]),
+        h('div', {}, [h('p', { class: 'small', html: '<b>묶기</b>' }),
+          radio('rt-split', 'one', RT.split ? 'split' : 'one', '고른 문항을 모아서 한 회기로', function () { RT.split = false; }),
+          radio('rt-split', 'split', RT.split ? 'split' : 'one', '원래 회기별로 따로', function () { RT.split = true; }),
+          h('label', { class: 'field' }, [h('span', { text: '한 회기 최대 문항(1~30, 넘으면 정답률 낮은 것부터)' }), lim])])
+      ]),
+      h('div', { class: 'grid2', style: 'margin-top:8px' }, [
+        h('label', { class: 'field' }, [h('span', { text: '제한 시간(분, 0은 제한 없음)' }), tl]),
+        h('label', { class: 'field' }, [h('span', { text: '결과 공개' }), showRes]),
+        h('label', { class: 'row' }, [shuf, h('span', { text: '학생마다 문항·보기 순서 섞기' })])
+      ]),
+      buildBtn
+    ]));
+    body.appendChild(groupsBox);
+    body.appendChild(previewBox);
+    if (RT.data) { drawList(); drawGroups(); if (draft && draft.retest) renderDraft(previewBox); } else load();
+  }
   function renderDraft(box) {
     box.innerHTML = '';
     var d = draft;
@@ -208,14 +342,14 @@
     d.questions.forEach(function (q, i) { card.appendChild(pqCard(q, i)); });
     var title = h('input', { type: 'text', maxlength: '80', value: d.title || defaultTitle() });
     title.addEventListener('input', function () { d.title = title.value; });
-    var n = d.questions.length;
+    var n = d.questions.length, lo = d.retest ? 1 : 5, hi = d.retest ? 30 : 10, bad = n < lo || n > hi;
     card.appendChild(h('label', { class: 'field' }, [h('span', { text: '시험 이름' }), title]));
     card.appendChild(h('div', { class: 'row' }, [
-      h('button', { class: 'btn accent', type: 'button', text: '이대로 시험 열기', disabled: n < 5 || n > 10, onclick: function () { save('open', title.value); } }),
-      h('button', { class: 'btn ghost', type: 'button', text: '임시 저장(아직 안 열기)', disabled: n < 5 || n > 10, onclick: function () { save('draft', title.value); } }),
-      h('button', { class: 'btn ghost', type: 'button', text: '모두 다시 뽑기', onclick: function () { $('#tab-body .btn.accent').click(); } })
+      h('button', { class: 'btn accent', type: 'button', text: '이대로 시험 열기', disabled: bad, onclick: function () { save('open', title.value); } }),
+      h('button', { class: 'btn ghost', type: 'button', text: '임시 저장(아직 안 열기)', disabled: bad, onclick: function () { save('draft', title.value); } }),
+      d.retest ? null : h('button', { class: 'btn ghost', type: 'button', text: '모두 다시 뽑기', onclick: function () { $('#tab-body .btn.accent').click(); } })
     ]));
-    if (n < 5 || n > 10) card.appendChild(h('p', { class: 'note bad small', text: '지금 ' + n + '문항입니다. 5~10문항이어야 열 수 있습니다.' }));
+    if (bad) card.appendChild(h('p', { class: 'note bad small', text: '지금 ' + n + '문항입니다. ' + lo + '~' + hi + '문항이어야 열 수 있습니다.' }));
     box.appendChild(card);
   }
   function defaultTitle() {
@@ -223,9 +357,15 @@
   }
   function save(status, title) {
     var f = draft.form;
-    call('createSession', { title: title || defaultTitle(), range: draft.range, rangeLabel: draft.rangeLabel, questions: draft.questions, timeLimit: f.timeLimit, showResult: f.showResult, shuffle: f.shuffle, status: status }).then(function (r) {
+    var rt = draft.retest, gi = draft.groupIdx;
+    call('createSession', { title: title || defaultTitle(), range: draft.range, rangeLabel: draft.rangeLabel, questions: draft.questions, timeLimit: f.timeLimit, showResult: f.showResult, shuffle: f.shuffle, status: status, retest: rt || undefined }).then(function (r) {
       if (!r.ok) { Q.toast(r.message, 4000); return; }
       Q.toast(status === 'open' ? '시험을 열었습니다. 학생 화면에 바로 보입니다.' : '임시 저장했습니다.');
+      if (rt) {   // 다시 풀기: 남은 묶음이 있으면 다시 풀기 탭으로
+        if (RT.groups && RT.groups[gi]) RT.groups[gi].saved = status;
+        draft = null;
+        curTab = RT.groups && RT.groups.some(function (g) { return !g.saved; }) ? 'retest' : 'run'; frame(); return;
+      }
       draft = { form: draft.form }; curTab = 'run'; frame();
     }).catch(function () { });
   }
@@ -239,6 +379,7 @@
         q.kind === 'orig' ? h('span', { class: 'chip bad', text: '임용 기출 원문 ' + (q.code || '') }) : null,
         q.source ? h('span', { class: 'chip', text: '근거 ' + q.source }) : null,
         Q.gradeChip(q.grade || (q.unit ? Q.gradeOf(q.unit) : null)),
+        q.retestOf ? h('span', { class: 'chip ' + (q.retestOf.how === 'same' ? '' : 'ok'), text: (q.retestOf.how === 'same' ? '원래 문항' : '같은 단원 새 문항') + ' · ' + q.retestOf.title + ' ' + (q.retestOf.no || '') + '번 정답률 ' + (q.retestOf.rate == null ? '-' : q.retestOf.rate + '%') }) : null,
         h('span', { style: 'flex:1' }),
         h('button', { class: 'btn ghost sm', type: 'button', text: '다른 문항으로', onclick: replace }),
         h('button', { class: 'btn ghost sm', type: 'button', text: '고치기', onclick: edit }),
@@ -257,9 +398,12 @@
     }
     function replace() {
       var t = q.kind === 'imyong' ? 'imyong' : q.kind === 'orig' ? 'orig' : q.type;
-      call('regenOne', { range: draft.range, type: t, excludeIds: draft.questions.map(function (x) { return x.bankId; }), excludeUsed: draft.form.excludeUsed, preferImportant: draft.form.preferImportant !== false }).then(function (r) {
+      var rg = draft.range || (q.unit ? { start: q.unit, end: q.unit } : null);
+      if (!rg) { Q.toast('이 문항은 단원 정보가 없어 다른 문항으로 바꿀 수 없습니다. 고치거나 빼 주세요.', 4000); return; }
+      var keep = q.retestOf;
+      call('regenOne', { range: rg, type: t, excludeIds: draft.questions.map(function (x) { return x.bankId; }), excludeUsed: draft.form.excludeUsed, preferImportant: draft.form.preferImportant !== false }).then(function (r) {
         if (!r.ok) { Q.toast(r.message); return; }
-        draft.questions[i] = r.question; renderDraft($('#preview'));
+        draft.questions[i] = r.question; if (keep) draft.questions[i].retestOf = Object.assign({}, keep, { how: 'replaced' }); renderDraft($('#preview'));
       }).catch(function () { });
     }
     function edit() {

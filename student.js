@@ -88,7 +88,7 @@
   }
   function loadHistory(box) {
     Q.api('myHistory', { studentNo: me.no, name: me.name }).then(function (r) {
-      box.innerHTML = ''; box.appendChild(h('h2', { text: '내 점수' }));
+      box.innerHTML = ''; box.appendChild(h('h2', { text: '내 점수와 지난 시험' }));
       if (!r.ok) { box.appendChild(errBox(r)); return; }
       var rel = r.history.filter(function (x) { return x.released; });
       if (!r.history.length) { box.appendChild(h('p', { class: 'muted', text: '아직 응시한 시험이 없습니다.' })); return; }
@@ -101,12 +101,12 @@
       var body = h('tbody');
       r.history.slice().reverse().forEach(function (x) {
         body.appendChild(h('tr', {}, [
-          h('td', { text: x.title }), h('td', { text: Q.fmtDate(x.at) }),
+          h('td', {}, [h('span', { text: x.title }), x.retest ? h('span', { class: 'chip', style: 'margin-left:6px', text: '다시 풀기' }) : null, x.n ? h('div', { class: 'tiny muted', text: x.n + '문항' }) : null]), h('td', { text: Q.fmtDate(x.at) }),
           h('td', { html: x.released ? '<b>' + x.score + '</b>' + (x.status === 'terminated' ? ' <span class="chip bad">이탈 종료</span>' : '') : '<span class="muted">공개 전</span>' }),
           h('td', { text: x.released && x.classAvg != null ? x.classAvg + ' (' + x.classN + '명)' : '-' }),
-          h('td', {}, [x.released ? h('button', { class: 'btn ghost sm', text: '다시 보기', onclick: function () {
+          h('td', {}, [x.released || x.closed ? h('button', { class: 'btn ghost sm', text: x.released ? '다시 보기' : '문항 다시 보기', onclick: function () {
             Q.api('myResult', { sid: x.sid, studentNo: me.no, name: me.name }).then(function (r) { if (r.ok) showResult(r); else Q.toast(r.message); });
-          } }) : null])
+          } }) : h('span', { class: 'tiny muted', text: '마감 뒤 다시 보기' })])
         ]));
       });
       tb.appendChild(body);
@@ -456,14 +456,28 @@
       card.appendChild(h('div', { class: 'note bad', role: 'alert', html: '<b>' + Q.esc(res.message || '화면 이탈 2회로 시험이 종료되었습니다.') + '</b><br>이의가 있으면 담당 교수님께 바로 말씀드리세요.' }));
       card.appendChild(h('p', {}, [h('span', { class: 'big-num', text: '0' }), ' 점']));
     } else if (!res.released) {
-      card.appendChild(h('div', { class: 'note ok', text: '답안이 제출되었습니다. 교수님이 채점을 확인하고 공개하면 「내 점수」에서 점수를 보고 「다시 보기」로 문항과 해설을 확인할 수 있습니다.' }));
+      card.appendChild(h('div', { class: 'note ok', text: res.reviewOnly ? '점수와 정답·해설은 교수님이 채점을 확인하고 공개하면 볼 수 있습니다. 지금은 문항과 내 답만 다시 볼 수 있습니다.' : '답안이 제출되었습니다. 시험이 마감되면 「내 점수와 지난 시험」에서 문항과 내 답을, 교수님이 공개하면 점수·정답·해설까지 다시 볼 수 있습니다.' }));
     } else {
       card.appendChild(h('p', {}, [h('span', { class: 'big-num', text: String(res.score) }), ' / 100점']));
       if (res.pending) card.appendChild(h('p', { class: 'note warn small', text: '서술형 ' + res.pending + '문항은 자동 예비 채점 점수입니다. 교수님 채점 뒤 바뀔 수 있습니다.' }));
     }
     app.appendChild(card);
-    if (res.released && res.items && res.status !== 'terminated') {
+    if (res.items && res.reviewOnly) {   // 공개 전: 문항과 내 답만
+      var rv0 = h('div', { class: 'card' }, [h('h2', { text: '문항과 내 답' }), h('p', { class: 'small muted', text: '정답과 해설은 교수님 공개 뒤에 나옵니다.' })]);
+      res.items.forEach(function (it) {
+        var blk = h('div', { class: 'review-item' }, [
+          h('div', { class: 'row' }, [h('b', { text: it.no + '번' }), h('span', { class: 'chip', text: Q.TYPE_LABEL[it.type] }), it.code ? h('span', { class: 'chip warn', text: (it.kind === 'orig' ? '임용 기출 ' : '기출 변형 ') + it.code }) : null]),
+          h('p', { style: 'white-space:pre-wrap', text: it.stem })
+        ]);
+        if (it.type === 'mc') blk.appendChild(h('ol', { class: 'small', style: 'list-style:none;padding-left:0' }, it.options.map(function (o, k) { return h('li', { style: k === it.mine ? 'font-weight:700' : '', text: '①②③④⑤⑥'[k] + ' ' + o + (k === it.mine ? '  ← 내 답' : '') }); })));
+        else blk.appendChild(h('p', { class: 'small', style: 'white-space:pre-wrap', html: '내 답: ' + (Q.esc(it.mine) || '<span class="muted">없음</span>') }));
+        rv0.appendChild(blk);
+      });
+      app.appendChild(rv0);
+    }
+    if (res.released && res.items) {
       var rv = h('div', { class: 'card' }, [h('h2', { text: '문항별 확인' })]);
+      if (res.status === 'terminated') rv.appendChild(h('p', { class: 'small muted', text: '이탈로 종료된 시험이라 아래 맞음·틀림은 참고용입니다(점수 0점).' }));
       res.items.forEach(function (it) {
         var mk = it.frac >= 1 ? ['ok', '맞음'] : it.frac > 0 ? ['part', '부분 ' + Math.round(it.frac * 100) + '%'] : ['bad', '틀림'];
         var blk = h('div', { class: 'review-item' }, [

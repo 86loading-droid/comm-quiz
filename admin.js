@@ -627,62 +627,142 @@
   }
 
   /* ---------- 성적 그래프 ---------- */
+  // 점수 변화 요약: 정규 회기 점수 배열 → 첫·최근·변화·평균·추세(회기당 기울기, 최소제곱)
+  function trendOf(v) {
+    var pts = v.map(function (y, i) { return y == null ? null : [i, y]; }).filter(Boolean);
+    if (!pts.length) return null;
+    var n = pts.length, mx = pts.reduce(function (t, p) { return t + p[0]; }, 0) / n, my = pts.reduce(function (t, p) { return t + p[1]; }, 0) / n;
+    var sxx = pts.reduce(function (t, p) { return t + (p[0] - mx) * (p[0] - mx); }, 0), sxy = pts.reduce(function (t, p) { return t + (p[0] - mx) * (p[1] - my); }, 0);
+    return { n: n, first: pts[0][1], last: pts[n - 1][1], change: Math.round((pts[n - 1][1] - pts[0][1]) * 10) / 10, mean: Math.round(my * 10) / 10, slope: n > 1 && sxx ? Math.round(sxy / sxx * 10) / 10 : null };
+  }
+  function signed(x) { return x == null ? '-' : (x > 0 ? '+' : '') + x; }
   function tabGrade(body) {
     body.appendChild(h('p', { class: 'muted' }, [h('span', { class: 'spinner' }), ' 불러오는 중…']));
     call('gradebook').then(function (r) {
       body.innerHTML = ''; if (!r.ok) return;
       if (!r.sessions.length) { body.appendChild(h('div', { class: 'card' }, [h('p', { class: 'muted', text: '연 시험이 아직 없습니다.' })])); return; }
-      var acc = css('--accent'), mut = css('--muted'), line = css('--line'), ink = css('--ink'), ok = css('--ok');
+      var acc = css('--accent'), mut = css('--muted'), line = css('--line'), ink = css('--ink'), ok = css('--ok'), warn = css('--warn') || '#b7791f', bad = css('--bad');
       var axis = { ticks: { color: mut }, grid: { color: line } };
-      // 1) 회기별 평균
-      var c1 = h('canvas', { role: 'img', 'aria-label': '회기별 평균 점수 꺾은선 그래프' });
-      body.appendChild(h('div', { class: 'card' }, [h('h2', { text: '회기별 평균 점수' }), h('div', { class: 'chart-box' }, [c1])]));
-      charts.push(new Chart(c1, { type: 'line', data: { labels: r.sessions.map(function (s) { return s.title; }), datasets: [
-        { label: '평균', data: r.sessions.map(function (s) { return s.avg; }), borderColor: acc, backgroundColor: acc, borderWidth: 3, pointRadius: 5, tension: .2 },
-        { label: '최고', data: r.sessions.map(function (s) { return s.scores.length ? Math.max.apply(null, s.scores) : null; }), borderColor: ok, backgroundColor: ok, borderDash: [4, 4], pointRadius: 3 },
-        { label: '최저', data: r.sessions.map(function (s) { return s.scores.length ? Math.min.apply(null, s.scores) : null; }), borderColor: mut, backgroundColor: mut, borderDash: [4, 4], pointRadius: 3 }
-      ] }, options: { maintainAspectRatio: false, scales: { y: Object.assign({ min: 0, max: 100 }, axis), x: { ticks: { color: mut }, grid: { display: false } } }, plugins: { legend: { labels: { color: ink } } } } }));
-      // 2) 회기 선택: 점수 분포와 문항별 정답률
-      var sel = h('select', {}, r.sessions.map(function (s) { return h('option', { value: s.id, text: s.title }); }).reverse());
+      var S = r.sessions, reg = S.filter(function (s) { return !s.retest; }), rts = S.filter(function (s) { return s.retest; });
+      var label = function (s) { return (s.retest ? '[다시] ' : '') + s.title; };
+      var only = function (pred, f) { return S.map(function (s) { return pred(s) ? f(s) : null; }); };
+      var isReg = function (s) { return !s.retest; }, isRt = function (s) { return !!s.retest; };
+      var yAxis = Object.assign({ min: 0, max: 100 }, axis), xAxis = { ticks: { color: mut, autoSkip: false, maxRotation: 50 }, grid: { display: false } };
+      // 1) 회기별 평균: 정규 회기와 다시 풀기 회기를 따로
+      var c1 = h('canvas', { role: 'img', 'aria-label': '회기별 평균 점수 꺾은선 그래프(정규 회기와 다시 풀기 구분)' });
+      body.appendChild(h('div', { class: 'card' }, [h('h2', { text: '회기별 평균 점수' }),
+        h('p', { class: 'small muted', text: '정규 회기는 선, 다시 풀기 회기는 주황 점으로 따로 표시합니다. 정규 회기 ' + reg.length + '회, 다시 풀기 ' + rts.length + '회.' }),
+        h('div', { class: 'chart-box' }, [c1])]));
+      charts.push(new Chart(c1, { type: 'line', data: { labels: S.map(label), datasets: [
+        { label: '정규 회기 평균', data: only(isReg, function (s) { return s.avg; }), borderColor: acc, backgroundColor: acc, borderWidth: 3, pointRadius: 5, tension: .2, spanGaps: true },
+        { label: '다시 풀기 평균', data: only(isRt, function (s) { return s.avg; }), borderColor: warn, backgroundColor: warn, showLine: false, pointRadius: 7, pointStyle: 'rectRot' },
+        { label: '정규 최고', data: only(isReg, function (s) { return s.scores.length ? Math.max.apply(null, s.scores) : null; }), borderColor: ok, backgroundColor: ok, borderDash: [4, 4], pointRadius: 2, spanGaps: true },
+        { label: '정규 최저', data: only(isReg, function (s) { return s.scores.length ? Math.min.apply(null, s.scores) : null; }), borderColor: mut, backgroundColor: mut, borderDash: [4, 4], pointRadius: 2, spanGaps: true }
+      ] }, options: { maintainAspectRatio: false, scales: { y: yAxis, x: xAxis }, plugins: { legend: { labels: { color: ink } } } } }));
+      // 2) 다시 풀기 효과: 같은 문항(원래 문항·같은 단원 새 문항)의 원래 정답률 → 다시 풀기 정답률
+      if (rts.length) {
+        var rsel = h('select', {}, rts.map(function (s) { return h('option', { value: s.id, text: s.title }); }).reverse());
+        var c5 = h('canvas', { role: 'img', 'aria-label': '다시 풀기 효과: 학생별 원래 정답률과 다시 풀기 정답률 막대그래프' });
+        var rinfo = h('div', { class: 'small' });
+        body.appendChild(h('div', { class: 'card' }, [h('div', { class: 'row between' }, [h('h2', { text: '다시 풀기 효과' }), h('div', { style: 'min-width:220px' }, [rsel])]),
+          h('p', { class: 'small muted', text: '다시 풀기 회기의 각 문항을 원래 회기의 그 문항과 짝지어, 같은 학생이 원래 회기에서 얻은 정답률과 다시 풀기에서 얻은 정답률을 비교합니다(두 회기를 모두 본 학생만).' }),
+          rinfo, h('div', { class: 'chart-box' }, [c5])]));
+        var ch5 = null;
+        var draw5 = function () {
+          var s = rts.filter(function (x) { return x.id === rsel.value; })[0];
+          var rows = r.students.filter(function (st) { return st.cmp && st.cmp[s.id]; }).map(function (st) { return { st: st, c: st.cmp[s.id] }; })
+            .sort(function (a2, b2) { return (b2.c.after - b2.c.before) - (a2.c.after - a2.c.before); });
+          var up = rows.filter(function (x) { return x.c.after > x.c.before; }).length, down = rows.filter(function (x) { return x.c.after < x.c.before; }).length;
+          rinfo.innerHTML = '';
+          rinfo.appendChild(h('p', {}, [h('span', { text: '원래 회기: ' + (s.retest.sources || []).map(function (x) { return x.title; }).join(', ') + ' · 기준 ' + (s.retest.threshold || 50) + '% 미만 · 응시 ' + s.scores.length + '명 · 평균 ' + (s.avg == null ? '-' : s.avg) + '점' })]));
+          rinfo.appendChild(h('p', { html: s.compare ? '같은 문항 정답률(비교 가능 ' + s.compare.n + '명): <b>' + s.compare.before + '%</b> → <b>' + s.compare.after + '%</b> (' + signed(Math.round((s.compare.after - s.compare.before) * 10) / 10) + '%p) · 오른 학생 ' + up + '명, 그대로 ' + (rows.length - up - down) + '명, 내린 학생 ' + down + '명' : '<span class="muted">두 회기를 모두 본 학생이 없어 비교할 수 없습니다.</span>' }));
+          if (ch5) ch5.destroy();
+          ch5 = new Chart(c5, { type: 'bar', data: { labels: rows.map(function (x) { return x.st.name; }), datasets: [
+            { label: '원래 회기 정답률(%)', data: rows.map(function (x) { return x.c.before; }), backgroundColor: mut, borderRadius: 3 },
+            { label: '다시 풀기 정답률(%)', data: rows.map(function (x) { return x.c.after; }), backgroundColor: warn, borderRadius: 3 }
+          ] }, options: { maintainAspectRatio: false, scales: { y: yAxis, x: { ticks: { color: mut, autoSkip: false, maxRotation: 60 }, grid: { display: false } } }, plugins: { legend: { labels: { color: ink } } } } });
+          charts.push(ch5);
+        };
+        rsel.addEventListener('change', draw5); draw5();
+      }
+      // 3) 회기 선택: 점수 분포와 문항별 정답률
+      var sel = h('select', {}, S.map(function (s) { return h('option', { value: s.id, text: label(s) }); }).reverse());
       var c2 = h('canvas', { role: 'img', 'aria-label': '점수 분포 막대그래프' }), c3 = h('canvas', { role: 'img', 'aria-label': '문항별 정답률 막대그래프' });
       var info = h('p', { class: 'small muted' });
       body.appendChild(h('div', { class: 'card' }, [h('div', { class: 'row between' }, [h('h2', { text: '회기별 점수 분포 · 문항별 정답률' }), h('div', { style: 'min-width:220px' }, [sel])]), info,
         h('div', { class: 'grid2' }, [h('div', { class: 'chart-box' }, [c2]), h('div', { class: 'chart-box' }, [c3])])]));
       var ch2 = null, ch3 = null;
       function draw() {
-        var s = r.sessions.filter(function (x) { return x.id === sel.value; })[0];
+        var s = S.filter(function (x) { return x.id === sel.value; })[0];
         var bins = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
         s.scores.forEach(function (v) { bins[Math.min(9, Math.floor(v / 10))]++; });
-        info.textContent = '응시 ' + s.scores.length + '명 · 평균 ' + (s.avg == null ? '-' : s.avg) + '점';
+        info.textContent = (s.retest ? '다시 풀기 회기 · ' : '') + '응시 ' + s.scores.length + '명 · 평균 ' + (s.avg == null ? '-' : s.avg) + '점';
         if (ch2) ch2.destroy(); if (ch3) ch3.destroy();
-        ch2 = new Chart(c2, { type: 'bar', data: { labels: ['0-9', '10-19', '20-29', '30-39', '40-49', '50-59', '60-69', '70-79', '80-89', '90-100'], datasets: [{ label: '학생 수', data: bins, backgroundColor: acc, borderRadius: 4 }] }, options: { maintainAspectRatio: false, plugins: { legend: { display: false }, title: { display: true, text: '점수 분포', color: ink } }, scales: { y: Object.assign({ beginAtZero: true, ticks: { stepSize: 1, color: mut } }, { grid: { color: line } }), x: { ticks: { color: mut }, grid: { display: false } } } } });
-        ch3 = new Chart(c3, { type: 'bar', data: { labels: s.items.map(function (it, i) { return (i + 1) + '번 ' + (it.kind === 'imyong' ? '기출 변형' : it.kind === 'orig' ? '기출 원문' : Q.TYPE_LABEL[it.type]); }), datasets: [{ label: '정답률(%)', data: s.items.map(function (it) { return it.rate; }), backgroundColor: s.items.map(function (it) { return it.rate != null && it.rate < 50 ? css('--bad') : ok; }), borderRadius: 4 }] }, options: { indexAxis: 'y', maintainAspectRatio: false, plugins: { legend: { display: false }, title: { display: true, text: '문항별 정답률(50% 미만 붉은색)', color: ink }, tooltip: { callbacks: { afterLabel: function (c) { return s.items[c.dataIndex].stem; } } } }, scales: { x: Object.assign({ min: 0, max: 100 }, axis), y: { ticks: { color: mut }, grid: { display: false } } } } });
+        var col = s.retest ? warn : acc;
+        ch2 = new Chart(c2, { type: 'bar', data: { labels: ['0-9', '10-19', '20-29', '30-39', '40-49', '50-59', '60-69', '70-79', '80-89', '90-100'], datasets: [{ label: '학생 수', data: bins, backgroundColor: col, borderRadius: 4 }] }, options: { maintainAspectRatio: false, plugins: { legend: { display: false }, title: { display: true, text: '점수 분포', color: ink } }, scales: { y: Object.assign({ beginAtZero: true, ticks: { stepSize: 1, color: mut } }, { grid: { color: line } }), x: { ticks: { color: mut }, grid: { display: false } } } } });
+        ch3 = new Chart(c3, { type: 'bar', data: { labels: s.items.map(function (it, i) { return (i + 1) + '번 ' + (it.kind === 'imyong' ? '기출 변형' : it.kind === 'orig' ? '기출 원문' : Q.TYPE_LABEL[it.type]); }), datasets: [{ label: '정답률(%)', data: s.items.map(function (it) { return it.rate; }), backgroundColor: s.items.map(function (it) { return it.rate != null && it.rate < 50 ? bad : ok; }), borderRadius: 4 }] }, options: { indexAxis: 'y', maintainAspectRatio: false, plugins: { legend: { display: false }, title: { display: true, text: '문항별 정답률(50% 미만 붉은색)', color: ink }, tooltip: { callbacks: { afterLabel: function (c) { return s.items[c.dataIndex].stem; } } } }, scales: { x: Object.assign({ min: 0, max: 100 }, axis), y: { ticks: { color: mut }, grid: { display: false } } } } });
         charts.push(ch2, ch3);
       }
       sel.addEventListener('change', draw); draw();
-      // 3) 학생별 추이
-      var stuSel = h('select', {}, [h('option', { value: '', text: '학생을 고르세요' })].concat(r.students.map(function (st) { return h('option', { value: st.no, text: st.no + ' ' + st.name }); })));
-      var c4 = h('canvas', { role: 'img', 'aria-label': '학생별 점수 추이 꺾은선 그래프' });
-      var tbl = h('div', { class: 'table-wrap', style: 'margin-top:14px' });
-      body.appendChild(h('div', { class: 'card' }, [h('div', { class: 'row between' }, [h('h2', { text: '학생별 점수 추이' }), h('div', { style: 'min-width:220px' }, [stuSel])]), h('div', { class: 'chart-box' }, [c4]), tbl]));
+      // 4) 학생별 점수 변화: 정규 회기 선, 다시 풀기 점, 반 평균, 변화 요약
+      var stuSel = h('select', { 'aria-label': '학생 고르기' }, [h('option', { value: '', text: '학생을 고르세요' })].concat(r.students.map(function (st) { return h('option', { value: st.no, text: st.no + ' ' + st.name }); })));
+      var c4 = h('canvas', { role: 'img', 'aria-label': '학생별 점수 변화 꺾은선 그래프' });
+      var sum = h('div', { class: 'small', style: 'margin:6px 0' });
+      body.appendChild(h('div', { class: 'card' }, [h('div', { class: 'row between' }, [h('h2', { text: '학생별 점수 변화' }), h('div', { style: 'min-width:220px' }, [stuSel])]), sum, h('div', { class: 'chart-box' }, [c4])]));
       var ch4 = null;
       function draw4() {
         if (ch4) ch4.destroy();
         var st = r.students.filter(function (x) { return x.no === stuSel.value; })[0];
-        var ds = [{ label: '반 평균', data: r.sessions.map(function (s) { return s.avg; }), borderColor: mut, backgroundColor: mut, borderDash: [6, 4], pointRadius: 3, tension: .2 }];
-        if (st) ds.unshift({ label: st.name, data: r.sessions.map(function (s) { return st.scores[s.id] == null ? null : st.scores[s.id]; }), borderColor: acc, backgroundColor: acc, borderWidth: 3, pointRadius: 5, spanGaps: true, tension: .2 });
-        ch4 = new Chart(c4, { type: 'line', data: { labels: r.sessions.map(function (s) { return s.title; }), datasets: ds }, options: { maintainAspectRatio: false, scales: { y: Object.assign({ min: 0, max: 100 }, axis), x: { ticks: { color: mut }, grid: { display: false } } }, plugins: { legend: { labels: { color: ink } } } } });
+        var ds = [{ label: '반 평균(정규)', data: only(isReg, function (s) { return s.avg; }), borderColor: mut, backgroundColor: mut, borderDash: [6, 4], pointRadius: 3, tension: .2, spanGaps: true }];
+        sum.innerHTML = '';
+        if (st) {
+          ds.unshift({ label: st.name + ' 다시 풀기', data: only(isRt, function (s) { return st.scores[s.id] == null ? null : st.scores[s.id]; }), borderColor: warn, backgroundColor: warn, showLine: false, pointRadius: 7, pointStyle: 'rectRot' });
+          ds.unshift({ label: st.name + ' 정규 회기', data: only(isReg, function (s) { return st.scores[s.id] == null ? null : st.scores[s.id]; }), borderColor: acc, backgroundColor: acc, borderWidth: 3, pointRadius: 5, spanGaps: true, tension: .2 });
+          var tr = trendOf(reg.map(function (s) { return st.scores[s.id] == null ? null : st.scores[s.id]; }));
+          var rv = rts.map(function (s) { return st.scores[s.id]; }).filter(function (x) { return x != null; });
+          var cps = rts.map(function (s) { return st.cmp && st.cmp[s.id]; }).filter(Boolean);
+          var parts = [];
+          if (tr) parts.push('정규 회기 ' + tr.n + '회: 첫 ' + tr.first + '점 → 최근 ' + tr.last + '점 (' + signed(tr.change) + '점), 평균 ' + tr.mean + '점' + (tr.slope != null ? ', 추세 회기당 ' + signed(tr.slope) + '점' : ''));
+          if (rv.length) parts.push('다시 풀기 ' + rv.length + '회 평균 ' + Math.round(rv.reduce(function (t, x) { return t + x; }, 0) / rv.length * 10) / 10 + '점');
+          cps.forEach(function (c, i) { parts.push('다시 풀기 효과(' + rts.filter(function (s) { return st.cmp[s.id] === c; })[0].title + '): 같은 문항 ' + c.before + '% → ' + c.after + '%'); });
+          if (!parts.length) parts.push('응시 기록이 없습니다.');
+          parts.forEach(function (t) { sum.appendChild(h('p', { style: 'margin:2px 0', text: t })); });
+        } else sum.appendChild(h('p', { class: 'muted', text: '학생을 고르면 정규 회기 점수 변화(첫·최근·추세)와 다시 풀기 점수를 따로 보여 줍니다.' }));
+        ch4 = new Chart(c4, { type: 'line', data: { labels: S.map(label), datasets: ds }, options: { maintainAspectRatio: false, scales: { y: yAxis, x: xAxis }, plugins: { legend: { labels: { color: ink } } } } });
         charts.push(ch4);
       }
       stuSel.addEventListener('change', draw4); draw4();
-      // 전체 성적표
-      var t = h('table', {}, [h('thead', {}, [h('tr', {}, [h('th', { text: '학번' }), h('th', { text: '이름' })].concat(r.sessions.map(function (s) { return h('th', { text: s.title }); })).concat([h('th', { text: '평균' })]))])]);
+      // 5) 전체 학생 점수 변화(정규 회기 첫 → 최근)
+      var allTr = r.students.map(function (st) { return { st: st, tr: trendOf(reg.map(function (s) { return st.scores[s.id] == null ? null : st.scores[s.id]; })) }; })
+        .filter(function (x) { return x.tr && x.tr.n >= 2; }).sort(function (a2, b2) { return b2.tr.change - a2.tr.change; });
+      if (allTr.length) {
+        var c6 = h('canvas', { role: 'img', 'aria-label': '전체 학생 점수 변화(정규 회기 첫 점수에서 최근 점수까지) 막대그래프' });
+        var hgt = Math.max(260, allTr.length * 18 + 60);
+        body.appendChild(h('div', { class: 'card' }, [h('h2', { text: '전체 학생 점수 변화' }),
+          h('p', { class: 'small muted', text: '정규 회기를 2회 이상 본 학생 ' + allTr.length + '명의 첫 점수에서 최근 점수까지 변화(점). 막대를 누르면 위 「학생별 점수 변화」에서 그 학생을 보여 줍니다.' }),
+          h('div', { class: 'chart-box', style: 'height:' + hgt + 'px' }, [c6])]));
+        var ch6 = new Chart(c6, { type: 'bar', data: { labels: allTr.map(function (x) { return x.st.name; }), datasets: [{ label: '변화(점)', data: allTr.map(function (x) { return x.tr.change; }), backgroundColor: allTr.map(function (x) { return x.tr.change >= 0 ? ok : bad; }), borderRadius: 3 }] },
+          options: { indexAxis: 'y', maintainAspectRatio: false, onClick: function (e, els) { if (els.length) { stuSel.value = allTr[els[0].index].st.no; draw4(); stuSel.scrollIntoView({ behavior: 'smooth', block: 'center' }); } },
+            plugins: { legend: { display: false }, tooltip: { callbacks: { afterLabel: function (c) { var t = allTr[c.dataIndex].tr; return '첫 ' + t.first + ' → 최근 ' + t.last + ' · 평균 ' + t.mean + (t.slope != null ? ' · 추세 ' + signed(t.slope) + '/회' : ''); } } } },
+            scales: { x: axis, y: { ticks: { color: mut, autoSkip: false }, grid: { display: false } } } } });
+        charts.push(ch6);
+      }
+      // 6) 전체 성적표: 정규·다시 풀기 열 구분, 평균도 따로
+      var t = h('table', {}, [h('thead', {}, [h('tr', {}, [h('th', { text: '학번' }), h('th', { text: '이름' })].concat(S.map(function (s) { return h('th', { style: s.retest ? 'background:var(--warn-soft)' : '', text: (s.retest ? '[다시] ' : '') + s.title }); }))
+        .concat([h('th', { text: '정규 평균' }), h('th', { text: '다시 풀기 평균' }), h('th', { text: '정규 변화(첫→최근)' })]))])]);
       var tb = h('tbody');
+      var mean = function (v) { return v.length ? Math.round(v.reduce(function (a2, b2) { return a2 + b2; }, 0) / v.length * 10) / 10 : '-'; };
       r.students.forEach(function (st) {
-        var v = r.sessions.map(function (s) { return st.scores[s.id]; }), got = v.filter(function (x) { return x != null; });
-        tb.appendChild(h('tr', {}, [h('td', { text: st.no }), h('td', { text: st.name })].concat(v.map(function (x) { return h('td', { text: x == null ? '-' : String(x) }); })).concat([h('td', { html: '<b>' + (got.length ? Math.round(got.reduce(function (a, b) { return a + b; }, 0) / got.length * 10) / 10 : '-') + '</b>' })])));
+        var v = S.map(function (s) { return st.scores[s.id]; });
+        var rg = reg.map(function (s) { return st.scores[s.id]; }).filter(function (x) { return x != null; }), rr = rts.map(function (s) { return st.scores[s.id]; }).filter(function (x) { return x != null; });
+        var tr = trendOf(reg.map(function (s) { return st.scores[s.id] == null ? null : st.scores[s.id]; }));
+        tb.appendChild(h('tr', {}, [h('td', { text: st.no }), h('td', { text: st.name })].concat(v.map(function (x, i) {
+          var cp = S[i].retest && st.cmp && st.cmp[S[i].id];
+          return h('td', { style: S[i].retest ? 'background:var(--warn-soft)' : '', title: cp ? '같은 문항 ' + cp.before + '% → ' + cp.after + '%' : '', text: x == null ? '-' : String(x) });
+        })).concat([h('td', { html: '<b>' + mean(rg) + '</b>' }), h('td', { text: String(mean(rr)) }), h('td', { text: tr && tr.n >= 2 ? signed(tr.change) : '-' })])));
       });
-      t.appendChild(tb); tbl.appendChild(t);
+      t.appendChild(tb);
+      body.appendChild(h('div', { class: 'card' }, [h('h2', { text: '전체 성적표' }), h('p', { class: 'small muted', text: '주황 칸은 다시 풀기 회기입니다. 칸에 마우스를 올리면 같은 문항의 원래 정답률 → 다시 풀기 정답률이 나옵니다.' }), h('div', { class: 'table-wrap' }, [t])]));
     }).catch(function () { });
   }
 

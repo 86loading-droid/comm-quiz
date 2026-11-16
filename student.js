@@ -94,6 +94,8 @@
       if (!r.history.length) { box.appendChild(h('p', { class: 'muted', text: '아직 응시한 시험이 없습니다.' })); return; }
       if (rel.length && window.Chart) {
         var cv = h('canvas', { 'aria-label': '내 점수와 반 평균 꺾은선 그래프', role: 'img' });
+        var regs = rel.filter(function (x) { return !x.retest; });
+        if (regs.length >= 2) { var d = Math.round((regs[regs.length - 1].score - regs[0].score) * 10) / 10; box.appendChild(h('p', { class: 'small', text: '정규 시험 ' + regs.length + '회: 처음 ' + regs[0].score + '점 → 최근 ' + regs[regs.length - 1].score + '점 (' + (d > 0 ? '+' : '') + d + '점)' })); }
         box.appendChild(h('div', { class: 'chart-box' }, [cv]));
         drawHistory(cv, rel);
       }
@@ -102,7 +104,7 @@
       r.history.slice().reverse().forEach(function (x) {
         body.appendChild(h('tr', {}, [
           h('td', {}, [h('span', { text: x.title }), x.retest ? h('span', { class: 'chip', style: 'margin-left:6px', text: '다시 풀기' }) : null, x.n ? h('div', { class: 'tiny muted', text: x.n + '문항' }) : null]), h('td', { text: Q.fmtDate(x.at) }),
-          h('td', { html: x.released ? '<b>' + x.score + '</b>' + (x.status === 'terminated' ? ' <span class="chip bad">이탈 종료</span>' : '') : '<span class="muted">공개 전</span>' }),
+          h('td', { html: x.released ? '<b>' + x.score + '</b>' + (x.status === 'terminated' ? ' <span class="chip bad">이탈 종료</span>' : '') + (x.compare ? '<div class="tiny muted">같은 문항 처음 ' + x.compare.before + '% → 다시 ' + x.compare.after + '%</div>' : '') : '<span class="muted">공개 전</span>' }),
           h('td', { text: x.released && x.classAvg != null ? x.classAvg + ' (' + x.classN + '명)' : '-' }),
           h('td', {}, [x.released || x.closed ? h('button', { class: 'btn ghost sm', text: x.released ? '다시 보기' : '문항 다시 보기', onclick: function () {
             Q.api('myResult', { sid: x.sid, studentNo: me.no, name: me.name }).then(function (r) { if (r.ok) showResult(r); else Q.toast(r.message); });
@@ -119,10 +121,12 @@
     chart = new Chart(cv, {
       type: 'line',
       data: {
-        labels: rows.map(function (x) { return x.title.length > 12 ? x.title.slice(0, 12) + '…' : x.title; }),
+        labels: rows.map(function (x) { var t = (x.retest ? '[다시] ' : '') + x.title; return t.length > 14 ? t.slice(0, 14) + '…' : t; }),
+        // 정규 회기는 선, 다시 풀기 회기는 따로 점으로(점수 흐름이 섞이지 않게)
         datasets: [
-          { label: '내 점수', data: rows.map(function (x) { return x.score; }), borderColor: cssVar('--accent'), backgroundColor: cssVar('--accent'), borderWidth: 3, pointRadius: 5, tension: .2 },
-          { label: '반 평균', data: rows.map(function (x) { return x.classAvg; }), borderColor: cssVar('--muted'), backgroundColor: cssVar('--muted'), borderDash: [6, 4], borderWidth: 2, pointRadius: 3, tension: .2 }
+          { label: '내 점수(정규)', data: rows.map(function (x) { return x.retest ? null : x.score; }), borderColor: cssVar('--accent'), backgroundColor: cssVar('--accent'), borderWidth: 3, pointRadius: 5, tension: .2, spanGaps: true },
+          { label: '내 점수(다시 풀기)', data: rows.map(function (x) { return x.retest ? x.score : null; }), borderColor: cssVar('--warn'), backgroundColor: cssVar('--warn'), showLine: false, pointRadius: 7, pointStyle: 'rectRot' },
+          { label: '반 평균', data: rows.map(function (x) { return x.retest ? null : x.classAvg; }), borderColor: cssVar('--muted'), backgroundColor: cssVar('--muted'), borderDash: [6, 4], borderWidth: 2, pointRadius: 3, tension: .2, spanGaps: true }
         ]
       },
       options: { maintainAspectRatio: false, scales: { y: { min: 0, max: 100, ticks: { stepSize: 20, color: cssVar('--muted') }, grid: { color: cssVar('--line') } }, x: { ticks: { color: cssVar('--muted') }, grid: { display: false } } }, plugins: { legend: { labels: { color: cssVar('--ink') } } } }

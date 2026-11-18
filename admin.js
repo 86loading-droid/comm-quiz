@@ -640,6 +640,10 @@
     body.appendChild(h('p', { class: 'muted' }, [h('span', { class: 'spinner' }), ' 불러오는 중…']));
     call('gradebook').then(function (r) {
       body.innerHTML = ''; if (!r.ok) return;
+      call('dupCandidates').then(function (d) {   // 학번을 잘못 쓴 학생이 있으면 성적이 둘로 나뉘어 보인다 → 알림
+        if (d.ok && d.groups.length && body.isConnected) body.insertBefore(h('div', { class: 'note warn', style: 'margin-bottom:12px' }, [h('span', { text: '같은 학생으로 보이는 학번 ' + d.groups.length + '건이 있어 성적이 나뉘어 보일 수 있습니다. ' }),
+          h('button', { class: 'btn sm', type: 'button', text: '학번 합치기로', onclick: function () { curTab = 'set'; frame(); } })]), body.firstChild);
+      }).catch(function () { });
       if (!r.sessions.length) { body.appendChild(h('div', { class: 'card' }, [h('p', { class: 'muted', text: '연 시험이 아직 없습니다.' })])); return; }
       var acc = css('--accent'), mut = css('--muted'), line = css('--line'), ink = css('--ink'), ok = css('--ok'), warn = css('--warn') || '#b7791f', bad = css('--bad');
       var axis = { ticks: { color: mut }, grid: { color: line } };
@@ -767,7 +771,91 @@
   }
 
   /* ---------- 명단·문항은행 ---------- */
+  /* ---------- 학번 잘못 입력 합치기: 같은 학생으로 보이는 학번 묶음 → 교수가 확인하고 마지막에 합치기 ---------- */
+  function mergeCard(body) {
+    var box = h('div', { class: 'card', id: 'merge-card' }, [h('h2', { text: '학번 합치기(같은 학생 찾기)' }), h('p', { class: 'muted' }, [h('span', { class: 'spinner' }), ' 찾는 중…'])]);
+    body.appendChild(box);
+    function memLine(m) {
+      return (m.no) + ' · ' + m.n + '회 응시' + (m.inRoster ? ' · 명단에 있음' : '') + (m.shapeOk ? '' : ' · 형식 다름') + ' (' + m.sessions.map(function (x) { return x.title.replace('의사소통장애 퀴즈 ', ''); }).join(', ') + ')';
+    }
+    function doMerge(name, to, from) {
+      call('mergeStudents', { to: to, from: from, check: true }).then(function (c) {
+        if (!c.ok) { Q.toast(c.message, 5000); return; }
+        var list = c.moves.map(function (m) { return '<li>' + Q.esc(m.title) + ': ' + Q.esc(m.from) + ' → ' + Q.esc(to) + (m.score != null ? ' (' + m.score + '점)' : '') + '</li>'; }).join('');
+        Q.confirmBox(Q.esc(name) + ' 학생 학번 합치기',
+          '<p><b>' + Q.esc(from.join(', ')) + '</b>의 응시 기록 ' + c.moves.length + '건을 <b>' + Q.esc(to) + '</b>로 옮깁니다.</p><ul class="small">' + list + '</ul>' +
+          '<p class="small">점수·답안·이탈 기록은 그대로 옮겨지고, 성적표와 그래프에서 한 학생으로 합쳐집니다. 앞으로 ' + Q.esc(from.join(', ')) + '와 같은 이름으로 들어오면 ' + Q.esc(to) + '로 이어집니다. 아래 「합치기 기록」에서 되돌릴 수 있습니다.</p>', '합치기')
+          .then(function (ok) {
+            if (!ok) return;
+            call('mergeStudents', { to: to, from: from }).then(function (r) {
+              if (!r.ok) { Q.toast(r.message, 5000); return; }
+              Q.toast(name + ' 학생 기록 ' + r.merged.moved + '건을 ' + to + '로 합쳤습니다.', 4000); load();
+            }).catch(function () { });
+          });
+      }).catch(function () { });
+    }
+    function load() {
+      call('dupCandidates').then(function (r) {
+        box.innerHTML = '';
+        box.appendChild(h('h2', { text: '학번 합치기(같은 학생 찾기)' }));
+        box.appendChild(h('p', { class: 'small muted', text: '이름이 같고 학번이 비슷한(입학 연도·끝 네 자리가 같거나 한 글자만 다른) 기록을 찾아 같은 학생 후보로 보여 줍니다. 남길 학번을 고르고 「합치기」를 누르면 확인 창이 나오며, 그 창에서 한 번 더 눌러야 합쳐집니다.' }));
+        if (!r.ok) { box.appendChild(h('div', { class: 'note bad', text: r.message })); return; }
+        if (!r.groups.length) box.appendChild(h('p', { class: 'note ok', text: '합칠 후보가 없습니다.' }));
+        r.groups.forEach(function (g) {
+          var pick = g.suggest, nm = 'mg-' + Math.random().toString(36).slice(2);
+          var blk = h('div', { class: 'card flat', style: 'margin:10px 0' }, [
+            h('div', { class: 'row', style: 'align-items:center' }, [h('b', { text: g.name }),
+              h('span', { class: 'chip ' + (g.confidence === 'high' ? 'ok' : 'warn'), text: g.confidence === 'high' ? '같은 학생 가능성 높음' : '확인 필요' }),
+              h('span', { class: 'small muted', text: g.reason })]),
+            h('p', { class: 'small', style: 'margin:6px 0 2px', text: '남길 학번:' })
+          ]);
+          g.members.forEach(function (m) {
+            var r0 = h('input', { type: 'radio', name: nm, value: m.no, checked: m.no === g.suggest });
+            r0.addEventListener('change', function () { if (r0.checked) pick = m.no; });
+            blk.appendChild(h('label', { class: 'row small', style: 'margin:2px 0 2px 8px;align-items:flex-start' }, [r0, h('span', { text: memLine(m) + (m.no === g.suggest ? '  ← 추천' : '') })]));
+          });
+          blk.appendChild(h('div', { class: 'row', style: 'margin-top:8px' }, [h('button', { class: 'btn accent sm', type: 'button', text: '합치기', onclick: function () {
+            doMerge(g.name, pick, g.members.map(function (m) { return m.no; }).filter(function (n) { return n !== pick; }));
+          } })]));
+          box.appendChild(blk);
+        });
+        if (r.doubtful.length) {
+          box.appendChild(h('h3', { text: '이름이 같지만 다른 학생으로 보이는 경우', style: 'margin-top:14px' }));
+          r.doubtful.forEach(function (g) {
+            box.appendChild(h('div', { class: 'card flat', style: 'margin:8px 0' }, [
+              h('div', { class: 'row' }, [h('b', { text: g.name }), h('span', { class: 'chip', text: '합치기 막음' })]),
+              h('p', { class: 'small', text: g.members.map(memLine).join(' / ') }),
+              h('p', { class: 'small muted', text: '같은 회기(' + g.conflict.map(function (c) { return c.title.replace('의사소통장애 퀴즈 ', ''); }).join(', ') + ')에 두 학번이 모두 응시해 이름이 같은 다른 학생일 가능성이 큽니다. 같은 학생이 맞으면 그 회기의 한쪽 응시 기록을 「응시 현황」에서 지운 뒤 합칠 수 있습니다.' })]));
+          });
+        }
+        // 직접 합치기(자동으로 못 찾은 경우)
+        var f1 = h('input', { placeholder: '잘못 쓴 학번', style: 'max-width:160px', 'aria-label': '잘못 쓴 학번' }), f2 = h('input', { placeholder: '남길 학번', style: 'max-width:160px', 'aria-label': '남길 학번' });
+        box.appendChild(h('div', { class: 'row', style: 'margin-top:14px;align-items:center' }, [h('span', { class: 'small', text: '직접 합치기' }), f1, h('span', { text: '→' }), f2,
+          h('button', { class: 'btn ghost sm', type: 'button', text: '확인하고 합치기', onclick: function () {
+            var a1 = f1.value.replace(/\s+/g, '').toUpperCase(), a2 = f2.value.replace(/\s+/g, '').toUpperCase();
+            if (!a1 || !a2 || a1 === a2) { Q.toast('두 학번을 입력하세요.'); return; }
+            doMerge('', a2, [a1]);
+          } })]));
+        box.appendChild(h('p', { class: 'tiny muted', text: '이름이 다른 학번끼리는 합칠 수 없습니다.' }));
+        // 합치기 기록·되돌리기
+        if (r.merges.length) {
+          box.appendChild(h('h3', { text: '합치기 기록', style: 'margin-top:14px' }));
+          r.merges.forEach(function (m) {
+            box.appendChild(h('div', { class: 'row small', style: 'margin:4px 0;align-items:center' }, [
+              h('span', { text: Q.fmtDate(m.at) + ' · ' + m.name + ' · ' + m.from.join(', ') + ' → ' + m.to + ' (' + m.moved.length + '건)' }),
+              m.undone ? h('span', { class: 'chip', text: '되돌림' }) : h('button', { class: 'btn ghost sm', type: 'button', text: '되돌리기', onclick: function () {
+                Q.confirmBox('합치기를 되돌릴까요?', '<p>' + Q.esc(m.to) + '로 옮긴 기록 ' + m.moved.length + '건을 원래 학번(' + Q.esc(m.from.join(', ')) + ')으로 돌려놓습니다.</p>', '되돌리기').then(function (ok) {
+                  if (ok) call('unmerge', { id: m.id }).then(function (x) { if (x.ok) { Q.toast(x.restored + '건을 되돌렸습니다.'); load(); } else Q.toast(x.message, 4000); });
+                });
+              } })]));
+          });
+        }
+      }).catch(function () { });
+    }
+    load();
+  }
   function tabSet(body) {
+    mergeCard(body);
     var ta = h('textarea', { placeholder: '한 줄에 한 명: 학번 이름\n예) 20241234 홍길동', style: 'min-height:180px' });
     var info = h('p', { class: 'small muted' });
     call('getRoster').then(function (r) { if (r.ok) { ta.value = r.roster.map(function (x) { return x.no + ' ' + x.name; }).join('\n'); info.textContent = r.roster.length ? '명단 ' + r.roster.length + '명 — 명단에 있는 학번·이름만 입장할 수 있습니다.' : '명단이 비어 있으면 누구나 학번·이름으로 입장합니다.'; } }).catch(function () { });

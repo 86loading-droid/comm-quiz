@@ -254,9 +254,6 @@
     th.addEventListener('change', load);
     // 만들기 설정
     function radio(name, val, cur, label, onpick) { var r = h('input', { type: 'radio', name: name, value: val, checked: cur === val }); r.addEventListener('change', function () { if (r.checked) onpick(val); }); return h('label', { class: 'row small' }, [r, h('span', { text: label })]); }
-    var per = h('select', { 'aria-label': '원래 문항 1개당 새 문항 수' }, [1, 2, 3].map(function (n) { return h('option', { value: String(n), text: n + '개' }); })); per.value = String(RT.perItem);
-    per.addEventListener('change', function () { RT.perItem = Number(per.value); });
-    var perWrap = h('label', { class: 'field', style: RT.mode === 'same' ? 'display:none' : '' }, [h('span', { text: '원래 문항 1개당 새 문항' }), per]);
     var lim = h('input', { type: 'number', min: '1', max: '30', value: String(RT.limit), style: 'max-width:100px' }); lim.addEventListener('change', function () { RT.limit = Math.max(1, Math.min(30, Number(lim.value) || 30)); lim.value = String(RT.limit); });
     var tl = h('input', { type: 'number', min: '0', max: '180', value: String(RT.timeLimit), style: 'max-width:100px' }); tl.addEventListener('change', function () { RT.timeLimit = Number(tl.value) || 0; });
     var showRes = h('select', {}, [h('option', { value: 'after', text: '교수 확인 뒤 공개' }), h('option', { value: 'immediate', text: '제출하면 바로 점수·해설 공개' })]); showRes.value = RT.showResult; showRes.addEventListener('change', function () { RT.showResult = showRes.value; });
@@ -310,9 +307,7 @@
       h('p', { class: 'kicker', text: '2단계' }), h('h2', { text: '어떻게 다시 낼까요' }),
       h('div', { class: 'grid2' }, [
         h('div', {}, [h('p', { class: 'small', html: '<b>문항</b>' }),
-          radio('rt-mode', 'same', RT.mode, '같은 문항 그대로', function (v) { RT.mode = v; perWrap.style.display = 'none'; }),
-          radio('rt-mode', 'similar', RT.mode, '같은 단원의 새 문항(문항은행에서)', function (v) { RT.mode = v; perWrap.style.display = ''; }),
-          radio('rt-mode', 'both', RT.mode, '원래 문항 + 같은 단원 새 문항', function (v) { RT.mode = v; perWrap.style.display = ''; }), perWrap]),
+          h('p', { class: 'small', text: '고른 원래 문항을 그대로 다시 냅니다. 새 문항은 넣지 않습니다.' })]),
         h('div', {}, [h('p', { class: 'small', html: '<b>묶기</b>' }),
           radio('rt-split', 'one', RT.split ? 'split' : 'one', '고른 문항을 모아서 한 회기로', function () { RT.split = false; }),
           radio('rt-split', 'split', RT.split ? 'split' : 'one', '원래 회기별로 따로', function () { RT.split = true; }),

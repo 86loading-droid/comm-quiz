@@ -22,7 +22,7 @@
   function showLogin(msg) {
     clear();
     var saved = {}; try { saved = JSON.parse(ssGet('quiz_me') || '{}'); } catch (e) { }
-    var no = h('input', { type: 'text', id: 'in-no', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', maxlength: '20', value: saved.no || '', placeholder: '예: 20241234' });
+    var no = h('input', { type: 'text', id: 'in-no', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', maxlength: '20', value: saved.no || '', placeholder: '예: 25B2004' });
     var nm = h('input', { type: 'text', id: 'in-name', autocomplete: 'off', maxlength: '40', value: saved.name || '', placeholder: '예: 홍길동' });
     no.addEventListener('input', function () { var p = no.selectionStart; no.value = no.value.toUpperCase().replace(/\s/g, ''); try { no.setSelectionRange(p, p); } catch (e) { } });
     var go = h('button', { class: 'btn accent block', type: 'submit', text: '입장하기' });
@@ -42,8 +42,14 @@
       var v = { no: no.value.trim().toUpperCase(), name: nm.value.trim() };
       if (v.no.length < 4) { Q.toast('학번을 확인해 주세요.'); no.focus(); return; }
       if (!v.name) { Q.toast('이름을 입력해 주세요.'); nm.focus(); return; }
-      me = v; ssSet('quiz_me', JSON.stringify(v));
-      showHome();
+      function enterNow() { me = v; ssSet('quiz_me', JSON.stringify(v)); showHome(); }
+      // 학번에 영문이 없으면 경고창(영문 빠뜨림·연도 네 자리 입력이 가장 많은 실수). 정말 맞으면 그대로 들어갈 수 있다.
+      if (!/[A-Z]/.test(v.no)) {
+        Q.modal({ title: '학번에 영문이 빠졌어요', html: '입력한 학번 <b>' + Q.esc(v.no) + '</b>에 영문이 없습니다.<br>학번은 <b>25B2004</b>처럼 입학 연도 두 자리, 영문 한 글자, 숫자 네 자리입니다.<br>영문을 넣어 다시 입력해 주세요.',
+          buttons: [{ label: '이 학번이 맞아요', onClick: enterNow }, { label: '다시 입력', primary: true, onClick: function () { setTimeout(function () { no.focus(); no.select(); }, 50); } }] });
+        return;
+      }
+      enterNow();
     });
     app.appendChild(form);
     setTimeout(function () { (saved.no ? nm : no).focus(); }, 50);
@@ -340,8 +346,8 @@
 
   /* ---------- 화면 이탈 감시 ----------
    * hidden(다른 앱·탭·화면 꺼짐·닫기): 바로 1회
-   * blur(창은 보이나 다른 창 선택): 노트북·PC에서만 2초 넘게 이어지면 1회.
-   *   휴대폰·태블릿은 가상 자판 등으로 초점만 잃는 일이 있어 세지 않고 「초점 이탈(미집계)」로 시각·길이만 남긴다(교수 화면에 표시).
+   * blur(창은 보이나 다른 창 선택): 노트북·PC는 2초 넘게 이어지면 1회.
+   *   휴대폰·태블릿은 3초 넘게 이어지면 1회(blurlong). 글자 칸에 입력 중(가상 자판)이면 세지 않고, 3초 미만은 「초점 이탈(미집계)」로 시각·길이만 남긴다.
    * 이탈이 시작되면 그 순간 서버에 알리고(sendBeacon), 돌아오면 같은 번호로 한 번 더 알려 확인한다(서버는 중복을 세지 않음).
    * 앱을 닫고 다시 들어오면 서버가 입장 때 판정한다(같은 이탈 중이면 추가로 세지 않음). */
   function onAway(kind) {
@@ -370,7 +376,15 @@
   function onBlur() {
     if (!ex || ex.done) return;
     clearTimeout(ex.blurT);
-    if (TOUCH) { if (!ex.note) ex.note = { id: 'nt' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), at: nowS() }; return; }
+    if (TOUCH) {
+      if (!ex.note) ex.note = { id: 'nt' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), at: nowS() };
+      // 2026-11-18 교수 결정: 휴대폰·태블릿도 3초 넘게 초점을 잃으면 이탈 1회. 단 글자 칸에 입력 중(가상 자판)이면 세지 않는다.
+      ex.blurT = setTimeout(function () {
+        if (!ex || ex.done || document.hasFocus() || document.visibilityState !== 'visible' || typingNow()) return;
+        ex.note = null; onAway('blurlong');
+      }, 3000);
+      return;
+    }
     ex.blurT = setTimeout(function () { if (!document.hasFocus() && document.visibilityState === 'visible') onAway('blur'); }, 2000);
   }
   // 휴대폰·태블릿의 초점 잃음이 끝났을 때: 2초 넘었으면 기록만 보낸다(경고 없음, 이탈 수에 넣지 않음)
@@ -379,6 +393,11 @@
     var n = ex.note, dur = nowS() - n.at; ex.note = null;
     if (dur < 2000 || ex.done) return;
     Q.api('violation', { sid: ex.sid, token: ex.token, studentNo: me.no, eventId: n.id, kind: 'blur', at: n.at, dur: dur, phase: 'note', detail: deviceInfo() });
+  }
+  function typingNow() {
+    var el = document.activeElement; if (!el) return false;
+    var t = (el.tagName || '').toLowerCase(), ty = (el.type || '').toLowerCase();
+    return t === 'textarea' || el.isContentEditable || (t === 'input' && ['radio', 'checkbox', 'button', 'submit'].indexOf(ty) < 0);
   }
   function onFocus() { if (!ex) return; clearTimeout(ex.blurT); endNote(); if (ex.away && document.visibilityState === 'visible') onBack(); }
   function onHide() { if (ex && !ex.done) { onAway('hidden'); flushBeacon(); } }

@@ -1,7 +1,7 @@
 /* 공통: 서버 호출, 화면 도구, 범위 표시 */
 (function () {
   var CFG = window.QUIZ_CONFIG || {};
-  var APP_VERSION = '1.7.0';
+  var APP_VERSION = '1.8.0';
   window.APP_VERSION = APP_VERSION;
 
   // 응답이 오지 않는 요청을 끝없이 기다리지 않는다(접속이 몰릴 때 한두 건이 멈추는 경우가 있음) → 시간이 지나면 timeout으로 돌려주고 호출한 쪽이 다시 보낸다
@@ -89,7 +89,7 @@
   }
   function fmtTime(t) { var d = new Date(t), p = function (n) { return (n < 10 ? '0' : '') + n; }; return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()); }
   var TYPE_LABEL = { mc: '객관식', short: '단답형', essay: '서술형', imyong: '임용 기출 변형', orig: '임용 기출 원문' };
-  var KIND_LABEL = { hidden: '다른 화면으로 전환', blur: '다른 창 선택', reenter: '앱 종료 후 다시 입장', leave: '페이지 나감' };
+  var KIND_LABEL = { hidden: '다른 화면으로 전환', blur: '다른 창 선택', blurlong: '3초 넘게 초점 이탈(태블릿·휴대폰)', reenter: '앱 종료 후 다시 입장', leave: '페이지 나감' };
 
   /* 목차(정답 없음) */
   var OUT = window.OUTLINE || [];
